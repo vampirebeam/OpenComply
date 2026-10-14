@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="810" viewBox="0 0 1440 810" role="img" aria-labelledby="t d">
+  <title id="t">OpenComply</title>
+  <desc id="d">OpenComply scans websites and repositories locally and returns evidence-based findings for people and AI agents.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#060a13"/>
+      <stop offset="1" stop-color="#0b1626"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.72" cy="0.45" r="0.6">
+      <stop offset="0" stop-color="#1d4ed8" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#1d4ed8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M28 0H0V28" fill="none" stroke="#1b2636" stroke-width="1"/>
+    </pattern>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#9aa8bb"/>
+    </marker>
+    <style>
+      .sans{font-family:Inter,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+      .h{fill:#f1f5f9;font-weight:700}
+      .muted{fill:#8b98a9}
+      .node{fill:#0e1928;stroke-width:1.5}
+      .lbl{fill:#e6edf3;font-size:15px;font-weight:600}
+      .sub{fill:#8b98a9;font-size:12px}
+      .grp{font-size:15px;font-weight:600}
+      .flow{stroke:#9aa8bb;stroke-width:1.6;fill:none}
+    </style>
+  </defs>
+
+  <rect width="1440" height="810" fill="url(#bg)"/>
+  <rect width="1440" height="810" fill="url(#glow)"/>
+  <g opacity="0.35" stroke="#1e40af" fill="none" stroke-width="1">
+    <path d="M0 640 C 180 600, 300 700, 520 650 S 820 600, 1000 690"/>
+    <path d="M0 665 C 200 630, 320 720, 540 675 S 840 625, 1020 715"/>
+    <path d="M0 690 C 220 660, 340 740, 560 700 S 860 650, 1040 740"/>
+  </g>
+
+  <!-- Brand -->
+  <g transform="translate(60 150)">
+    <path d="M24 0 L46 8 V26 C46 40 37 50 24 56 C11 50 2 40 2 26 V8 Z" fill="url(#mark)"/>
+    <path d="M14 28 L21 35 L35 20" stroke="#06101f" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="64" y="42" class="sans h" font-size="44">OpenComply</text>
+  </g>
+
+  <text class="mono h" font-size="38">
+    <tspan x="60" y="290">From URL or repo</tspan>
+    <tspan x="60" y="338">to audit evidence</tspan>
+    <tspan x="60" y="386" fill="#22d3ee">in one command.</tspan>
+  </text>
+
+  <text class="mono muted" font-size="16">
+    <tspan x="60" y="440">Security headers, TLS and ISO 27001 /</tspan>
+    <tspan x="60" y="464">42001 readiness — run from your</tspan>
+    <tspan x="60" y="488">machine, with findings your AI agent</tspan>
+    <tspan x="60" y="512">can act on.</tspan>
+  </text>
+
+  <g class="mono" font-size="14" fill="#cbd5e1">
+    <g transform="translate(60 560)">
+      <circle cx="7" cy="-5" r="6" fill="none" stroke="#22d3ee" stroke-width="2"/>
+      <text x="20" y="0">No telemetry</text>
+    </g>
+    <g transform="translate(200 560)">
+      <path d="M1 -11 L13 -11 L13 1 L7 4 L1 1 Z" fill="none" stroke="#34d399" stroke-width="2"/>
+      <text x="20" y="0">Evidence-based</text>
+    </g>
+    <g transform="translate(60 592)">
+      <path d="M0 -11 L5 -1 L14 -6 L9 3" fill="none" stroke="#a78bfa" stroke-width="2"/>
+      <text x="20" y="0">Agent-ready</text>
+    </g>
+    <g transform="translate(200 592)">
+      <rect x="1" y="-8" width="12" height="10" rx="2" fill="none" stroke="#f472b6" stroke-width="2"/>
+      <path d="M4 -8 V-11 A3 3 0 0 1 10 -11 V-8" fill="none" stroke="#f472b6" stroke-width="2"/>
+      <text x="20" y="0">Least privilege</text>
+    </g>
+  </g>
+
+  <!-- Window -->
+  <g>
+    <rect x="560" y="70" width="830" height="680" rx="18" fill="#0a111c" stroke="#2a3441" stroke-width="1.5"/>
+    <path d="M560 130 H1390" stroke="#1f2a38"/>
+    <rect x="561" y="131" width="828" height="618" rx="0" fill="url(#grid)" opacity="0.6"/>
+    <circle cx="592" cy="100" r="7" fill="#ff5f57"/>
+    <circle cx="616" cy="100" r="7" fill="#febc2e"/>
+    <circle cx="640" cy="100" r="7" fill="#28c840"/>
+    <rect x="845" y="86" width="260" height="28" rx="14" fill="#141e2c"/>
+    <text x="975" y="105" text-anchor="middle" class="mono muted" font-size="13">opencomply — local scan</text>
+  </g>
+
+  <!-- Targets -->
+  <rect x="590" y="160" width="210" height="220" rx="12" fill="none" stroke="#f472b6" stroke-dasharray="6 5" stroke-width="1.5"/>
+  <text x="608" y="188" class="sans grp" fill="#f472b6">Targets</text>
+  <rect x="608" y="204" width="174" height="66" rx="10" class="node" stroke="#f472b6"/>
+  <text x="624" y="232" class="sans lbl">Website</text>
+  <text x="624" y="254" class="mono sub">https://example.com</text>
+  <rect x="608" y="290" width="174" height="66" rx="10" class="node" stroke="#f472b6"/>
+  <text x="624" y="318" class="sans lbl">Repository</text>
+  <text x="624" y="340" class="mono sub">./my-repo</text>
+
+  <!-- Engine -->
+  <rect x="850" y="160" width="250" height="220" rx="12" fill="none" stroke="#34d399" stroke-dasharray="6 5" stroke-width="1.5"/>
+  <text x="868" y="188" class="sans grp" fill="#34d399">OpenComply engine</text>
+  <rect x="868" y="204" width="214" height="46" rx="10" class="node" stroke="#34d399"/>
+  <text x="884" y="232" class="sans lbl">Versioned rule packs</text>
+  <rect x="868" y="262" width="214" height="46" rx="10" class="node" stroke="#34d399"/>
+  <text x="884" y="290" class="sans lbl">Evidence collector</text>
+  <rect x="868" y="320" width="214" height="46" rx="10" class="node" stroke="#34d399"/>
+  <text x="884" y="348" class="sans lbl">Findings &amp; grading</text>
+
+  <!-- Report -->
+  <rect x="1150" y="160" width="210" height="220" rx="12" fill="none" stroke="#f59e0b" stroke-dasharray="6 5" stroke-width="1.5"/>
+  <text x="1168" y="188" class="sans grp" fill="#f59e0b">Report</text>
+  <rect x="1168" y="204" width="174" height="46" rx="10" class="node" stroke="#f59e0b"/>
+  <text x="1184" y="232" class="sans lbl">Summary</text>
+  <rect x="1168" y="262" width="174" height="46" rx="10" class="node" stroke="#f59e0b"/>
+  <text x="1184" y="290" class="sans lbl">JSON</text>
+  <rect x="1168" y="320" width="174" height="46" rx="10" class="node" stroke="#f59e0b"/>
+  <text x="1184" y="348" class="sans lbl">Markdown</text>
+
+  <!-- Modules -->
+  <rect x="590" y="420" width="510" height="130" rx="12" fill="none" stroke="#22d3ee" stroke-dasharray="6 5" stroke-width="1.5"/>
+  <text x="608" y="448" class="sans grp" fill="#22d3ee">Modules</text>
+  <g>
+    <rect x="608" y="462" width="112" height="70" rx="10" class="node" stroke="#22d3ee"/>
+    <text x="664" y="492" text-anchor="middle" class="sans lbl">Headers</text>
+    <text x="664" y="514" text-anchor="middle" class="mono sub">A+ … F</text>
+    <rect x="730" y="462" width="112" height="70" rx="10" class="node" stroke="#22d3ee"/>
+    <text x="786" y="492" text-anchor="middle" class="sans lbl">SSL/TLS</text>
+    <text x="786" y="514" text-anchor="middle" class="mono sub">A+ … F</text>
+    <rect x="852" y="462" width="112" height="70" rx="10" class="node" stroke="#22d3ee"/>
+    <text x="908" y="492" text-anchor="middle" class="sans lbl">ISO 27001</text>
+    <text x="908" y="514" text-anchor="middle" class="mono sub">Level 0–4</text>
+    <rect x="974" y="462" width="112" height="70" rx="10" class="node" stroke="#22d3ee"/>
+    <text x="1030" y="492" text-anchor="middle" class="sans lbl">ISO 42001</text>
+    <text x="1030" y="514" text-anchor="middle" class="mono sub">Level 0–4</text>
+  </g>
+
+  <!-- Agents -->
+  <rect x="1150" y="420" width="210" height="300" rx="12" fill="none" stroke="#a78bfa" stroke-dasharray="6 5" stroke-width="1.5"/>
+  <text x="1168" y="448" class="sans grp" fill="#a78bfa">You &amp; AI agents</text>
+  <rect x="1168" y="462" width="174" height="44" rx="10" class="node" stroke="#a78bfa"/>
+  <text x="1184" y="489" class="sans lbl">Claude Code</text>
+  <rect x="1168" y="516" width="174" height="44" rx="10" class="node" stroke="#a78bfa"/>
+  <text x="1184" y="543" class="sans lbl">Codex</text>
+  <rect x="1168" y="570" width="174" height="44" rx="10" class="node" stroke="#a78bfa"/>
+  <text x="1184" y="597" class="sans lbl">Cursor</text>
+  <rect x="1168" y="624" width="174" height="44" rx="10" class="node" stroke="#a78bfa"/>
+  <text x="1184" y="651" class="sans lbl">Gemini CLI</text>
+  <text x="1255" y="700" text-anchor="middle" class="mono sub">reads compact findings</text>
+
+  <!-- Flows -->
+  <path d="M800 270 H846" class="flow" marker-end="url(#arw)"/>
+  <path d="M1100 270 H1146" class="flow" marker-end="url(#arw)"/>
+  <path d="M975 380 V416" class="flow" marker-end="url(#arw)" marker-start="url(#arw)"/>
+  <path d="M1255 380 V416" class="flow" marker-end="url(#arw)"/>
+  <text x="695" y="400" text-anchor="middle" class="mono sub">read-only · no telemetry</text>
+
+  <!-- Terminal -->
+  <rect x="590" y="580" width="510" height="140" rx="12" fill="#05090f" stroke="#2a3441"/>
+  <text class="mono" font-size="13">
+    <tspan x="608" y="610" fill="#34d399">$</tspan><tspan fill="#e6edf3"> opencomply scan headers https://example.com</tspan>
+    <tspan x="608" y="636" fill="#cbd5e1">headers https://example.com verdict=fail pass=8 fail=1</tspan>
+    <tspan x="608" y="660" fill="#f87171">FAIL</tspan><tspan fill="#cbd5e1"> HDR-002 medium CSP allows inline scripts</tspan>
+    <tspan x="608" y="682" fill="#8b98a9">  fix: use nonces or hashes in script-src</tspan>
+    <tspan x="608" y="706" fill="#22d3ee">next:</tspan><tspan fill="#8b98a9"> fix 1 · evidence: --format markdown</tspan>
+  </text>
+</svg>
