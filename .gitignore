@@ -24,4 +24,5 @@ rustc-ice-*.txt
 #.idea/
 .claude
 *.txt
+!THIRD-PARTY-NOTICES.txt
 *.png
