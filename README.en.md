@@ -13,7 +13,7 @@
 
 ## Overview
 
-OpenComply is **a single CLI engine** that checks targets against versioned, signed rules and returns structured output. Pass and fail come only from the engine; AI agents, CI/CD and other tools call it and present or act on the results.
+OpenComply is **a single CLI engine** that checks targets against versioned, signed rules and returns structured output. Pass and fail come only from the engine; you or your AI agent call it and act on the results.
 
 | Module | Checks | Result |
 |---|---|---|
@@ -25,7 +25,6 @@ OpenComply is **a single CLI engine** that checks targets against versioned, sig
 |---|---|
 | **CLI** | Run `opencomply` from a terminal or script |
 | **AI agent** | Claude Code, Codex, Cursor, Gemini CLI or any agent that can run commands calls the CLI and reads the summary or JSON |
-| **CI/CD** | Use the exit code and JSON as pipeline conditions (optional, see [CI/CD](#cicd-advanced)) |
 
 OpenComply is a CLI that AI agents can call, **not an AI model**, and no AI takes part in deciding results. OpenComply checks and reports; it never modifies source code. Whether recommendations are applied to code depends on the user and on the permissions of the connected AI agent.
 
