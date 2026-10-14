@@ -102,17 +102,40 @@ pub fn redact_report(report: &Report) -> Report {
 mod tests {
     use super::*;
 
+    // Synthetic secrets are split with concat! so secret scanners do not flag the source; the tested value is unchanged.
     #[test]
     fn redacts_known_secret_formats() {
         let cases = [
-            ("key AKIAIOSFODNN7EXAMPLE used", "key [REDACTED aws access key] used"),
-            ("ghp_0123456789abcdefghijklmnopqrstuvwxyzAB", "[REDACTED github token]"),
-            ("xoxb-1234567890-abcdefghij", "[REDACTED slack token]"),
-            ("sk_live_0123456789abcdefABCD", "[REDACTED stripe key]"),
-            ("AIzaSyA0123456789abcdefghijklmnopqrstuv", "[REDACTED google api key]"),
-            ("sk-ant-api03-abcdefghijklmnopqrstuvwx", "[REDACTED api key]"),
             (
-                "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+                concat!("key AKIA", "IOSFODNN7EXAMPLE used"),
+                "key [REDACTED aws access key] used",
+            ),
+            (
+                concat!("ghp_", "0123456789abcdefghijklmnopqrstuvwxyzAB"),
+                "[REDACTED github token]",
+            ),
+            (
+                concat!("xoxb-", "1234567890-abcdefghij"),
+                "[REDACTED slack token]",
+            ),
+            (
+                concat!("sk_live_", "0123456789abcdefABCD"),
+                "[REDACTED stripe key]",
+            ),
+            (
+                concat!("AIza", "SyA0123456789abcdefghijklmnopqrstuv"),
+                "[REDACTED google api key]",
+            ),
+            (
+                concat!("sk-ant-", "api03-abcdefghijklmnopqrstuvwx"),
+                "[REDACTED api key]",
+            ),
+            (
+                concat!(
+                    "eyJhbGciOiJIUzI1NiJ9.",
+                    "eyJzdWIiOiIxMjM0NTY3ODkwIn0.",
+                    "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+                ),
                 "[REDACTED jwt]",
             ),
         ];
@@ -147,7 +170,11 @@ mod tests {
 
     #[test]
     fn redacts_private_key_blocks() {
-        let pem = "x -----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY----- y";
+        let pem = concat!(
+            "x -----BEGIN RSA PRIVATE",
+            " KEY-----\nMIIabc\n-----END RSA PRIVATE",
+            " KEY----- y"
+        );
         assert_eq!(redact(pem), "x [REDACTED private key] y");
     }
 

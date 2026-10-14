@@ -96,7 +96,7 @@ proptest! {
 
     #[test]
     fn redaction_is_stable_and_hides_injected_secrets(prefix in ".{0,40}", suffix in ".{0,40}") {
-        let secret = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
+        let secret = concat!("ghp_", "0123456789abcdefghijklmnopqrstuvwxyzAB");
         let text = format!("{prefix} {secret} {suffix}");
         let once = redact(&text).into_owned();
         prop_assert!(!once.contains(secret));

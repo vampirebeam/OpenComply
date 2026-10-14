@@ -1,0 +1,13 @@
+{
+  "name": "opencomply",
+  "owner": { "name": "vampirebeam", "url": "https://github.com/vampirebeam" },
+  "description": "OpenComply plugins for Claude Code.",
+  "plugins": [
+    {
+      "name": "opencomply",
+      "source": "./plugins/opencomply",
+      "description": "Check a website's HTTP security headers with the OpenComply CLI: grade A+ to F, platform-aware fixes and the path to a higher grade.",
+      "category": "security"
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Installer scripts run on Linux / macOS: keep LF line endings on every checkout.
+*.sh text eol=lf
