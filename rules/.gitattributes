@@ -1,0 +1,2 @@
+# Signed rule packs must stay byte-identical on every OS: no line-ending conversion.
+* -text

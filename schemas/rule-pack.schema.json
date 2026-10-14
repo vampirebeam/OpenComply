@@ -1,0 +1,371 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RulePack",
+  "type": "object",
+  "properties": {
+    "pack": {
+      "$ref": "#/$defs/PackMeta"
+    },
+    "rule": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Rule"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "pack"
+  ],
+  "$defs": {
+    "Builtin": {
+      "description": "Built-in header checks that need real parsing (CSP, HSTS, cookies, redirects). The list is closed:\na rule pack can only pick one by name, never add or change behaviour.",
+      "type": "string",
+      "enum": [
+        "hsts",
+        "csp",
+        "referrer_policy",
+        "clickjacking",
+        "https_redirect",
+        "header_syntax",
+        "cookies",
+        "info_disclosure"
+      ]
+    },
+    "Check": {
+      "description": "The complete operator allowlist. Header operators apply to the headers module, file operators to the ISO modules.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "header": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "header_present"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "header"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "header": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "header_absent"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "header"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "header": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "header_equals"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "header",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "header": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "header_contains"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "header",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "header": {
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "header_one_of"
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "header",
+            "values"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "directive": {
+              "type": "string"
+            },
+            "header": {
+              "type": "string"
+            },
+            "min": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "op": {
+              "type": "string",
+              "const": "header_directive_at_least"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "header",
+            "directive",
+            "min"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "file_exists"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "file_contains"
+            },
+            "path": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path",
+            "text"
+          ]
+        },
+        {
+          "description": "A check implemented in the engine, selected by name from the closed `Builtin` list.",
+          "type": "object",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/Builtin"
+            },
+            "op": {
+              "type": "string",
+              "const": "builtin"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "name"
+          ]
+        }
+      ]
+    },
+    "Module": {
+      "type": "string",
+      "enum": [
+        "headers",
+        "tls",
+        "iso27001",
+        "iso42001"
+      ]
+    },
+    "PackMeta": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "module": {
+          "$ref": "#/$defs/Module"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "module"
+      ]
+    },
+    "PlatformGuide": {
+      "type": "object",
+      "properties": {
+        "how": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "prefer": {
+          "description": "The better place to fix it when several detected layers can (e.g. nonces belong in the app, not the CDN).",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "how"
+      ]
+    },
+    "Rule": {
+      "description": "`mandatory` rules cap the grade when they fail; `weight` (0–100) is the rule's share of the score.",
+      "type": "object",
+      "properties": {
+        "check": {
+          "$ref": "#/$defs/Check"
+        },
+        "example_fix": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "fix_hint": {
+          "type": "string"
+        },
+        "html_only": {
+          "description": "Only meaningful for pages rendered in a browser; a non-HTML response (e.g. a JSON API) makes it N/A.",
+          "type": "boolean",
+          "default": false
+        },
+        "id": {
+          "type": "string"
+        },
+        "mandatory": {
+          "type": "boolean",
+          "default": false
+        },
+        "platforms": {
+          "description": "Platform-specific guidance keyed by platform id (e.g. `cloudflare`, `vercel`, `nginx`).",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/PlatformGuide"
+          },
+          "default": {}
+        },
+        "remediation": {
+          "type": "string"
+        },
+        "review_question": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "title": {
+          "type": "string"
+        },
+        "upgrade_impact": {
+          "description": "What passing this check costs or changes (e.g. nonces need server rendering), shown on the path to a higher grade.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "version": {
+          "type": "string"
+        },
+        "weight": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "title",
+        "severity",
+        "weight",
+        "check",
+        "fix_hint",
+        "remediation"
+      ]
+    },
+    "Severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    }
+  }
+}

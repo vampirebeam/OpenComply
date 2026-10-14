@@ -1,0 +1,4 @@
+# Workspace root as an absolute path, so code can include repo files by root-relative path (`root_file!`)
+# instead of counting `../` from each source file.
+[env]
+OPENCOMPLY_ROOT = { value = "", relative = true }

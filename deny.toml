@@ -1,0 +1,36 @@
+# cargo-deny: supply-chain policy — advisories, Apache-2.0-compatible licenses, duplicate crates, crate sources.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+]
+unused-allowed-license = "allow"
+# Mozilla CA root bundle (data) used by rustls; permissive data license, scoped to this crate only.
+# Its license text must ship with binary releases (third-party notices).
+exceptions = [{ allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,22 @@
+[package]
+name = "opencomply-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+regex.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenComplyReport",
+  "description": "The `--format json` document. Its JSON Schema (`schemas/report.schema.json`) is generated from this type.",
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Finding"
+      }
+    },
+    "grade": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Grading"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "module": {
+      "$ref": "#/$defs/Module"
+    },
+    "platforms": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DetectedPlatform"
+      }
+    },
+    "rule_packs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RulePackRef"
+      }
+    },
+    "scanner_version": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary"
+    },
+    "target": {
+      "type": "string"
+    },
+    "verdict": {
+      "$ref": "#/$defs/Verdict"
+    }
+  },
+  "required": [
+    "schema_version",
+    "scanner_version",
+    "module",
+    "target",
+    "rule_packs",
+    "platforms",
+    "verdict",
+    "summary",
+    "findings"
+  ],
+  "$defs": {
+    "DetectedPlatform": {
+      "type": "object",
+      "properties": {
+        "evidence": {
+          "$ref": "#/$defs/Evidence"
+        },
+        "id": {
+          "type": "string"
+        },
+        "layer": {
+          "$ref": "#/$defs/Layer"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "layer",
+        "evidence"
+      ]
+    },
+    "Evidence": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "$ref": "#/$defs/EvidenceClass"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "class",
+        "source",
+        "detail"
+      ]
+    },
+    "EvidenceClass": {
+      "type": "string",
+      "enum": [
+        "verified",
+        "inferred",
+        "manual_review"
+      ]
+    },
+    "Finding": {
+      "description": "`reason` = why this result (scanner-generated, e.g. \"response has no Permissions-Policy header\").\n`fix_hint` = one-line action; `example_fix` = a concrete, copy-ready setting (e.g. the exact header line to add);\n`review_question` = the decision a person must make for review / unknown results; `remediation` = full guidance.",
+      "type": "object",
+      "properties": {
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "example_fix": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fix_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform_fixes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlatformFix"
+          }
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remediation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review_question": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule_id": {
+          "type": "string"
+        },
+        "rule_version": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_id",
+        "rule_version",
+        "title",
+        "status",
+        "severity",
+        "evidence"
+      ]
+    },
+    "Grade": {
+      "description": "Letter grades. Headers uses A+–F; TLS additionally uses A-, E, T (untrusted), M (hostname mismatch).\n`NotAssessed` = a required probe did not complete; it is never upgraded to a letter grade.",
+      "type": "string",
+      "enum": [
+        "A+",
+        "A",
+        "A-",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "T",
+        "M",
+        "N/A"
+      ]
+    },
+    "Grading": {
+      "type": "object",
+      "properties": {
+        "capped_by": {
+          "description": "Why the grade is lower than the score alone would give, e.g. \"HDR-002 is mandatory and fails\".",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "grade": {
+          "$ref": "#/$defs/Grade"
+        },
+        "score": {
+          "description": "0–100; absent when not assessed.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "upgrades": {
+          "description": "Path to the next grade and to A+, so a lower grade comes with what it would take to raise it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Upgrade"
+          }
+        }
+      },
+      "required": [
+        "grade",
+        "capped_by",
+        "upgrades"
+      ]
+    },
+    "Layer": {
+      "type": "string",
+      "enum": [
+        "cdn",
+        "host",
+        "server",
+        "framework",
+        "frontend"
+      ]
+    },
+    "Module": {
+      "type": "string",
+      "enum": [
+        "headers",
+        "tls",
+        "iso27001",
+        "iso42001"
+      ]
+    },
+    "PlatformFix": {
+      "description": "Where and how to fix on a detected platform (e.g. Cloudflare dashboard path); `note` = platform caveat.",
+      "type": "object",
+      "properties": {
+        "how": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "type": "string"
+        },
+        "preferred": {
+          "description": "Fix it here rather than at the other listed layer.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "platform",
+        "how"
+      ]
+    },
+    "RulePackRef": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "signed_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ]
+    },
+    "Severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "Status": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "unknown",
+        "not_applicable",
+        "needs_review",
+        "insufficient_evidence"
+      ]
+    },
+    "Summary": {
+      "type": "object",
+      "properties": {
+        "fail": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "insufficient_evidence": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "needs_review": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "not_applicable": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "pass": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "pass",
+        "fail",
+        "unknown",
+        "not_applicable",
+        "needs_review",
+        "insufficient_evidence"
+      ]
+    },
+    "Upgrade": {
+      "description": "What it takes to reach `to`: the fewest checks to fix, in order, with the points each adds.",
+      "type": "object",
+      "properties": {
+        "result": {
+          "description": "Grade and score after all steps; can be higher than `to` (one fix may jump several grades).",
+          "$ref": "#/$defs/Grade"
+        },
+        "result_score": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UpgradeStep"
+          }
+        },
+        "to": {
+          "$ref": "#/$defs/Grade"
+        }
+      },
+      "required": [
+        "to",
+        "steps",
+        "result",
+        "result_score"
+      ]
+    },
+    "UpgradeStep": {
+      "description": "`required` = `to` cannot be reached without this check (a cap); `impact` = what passing it costs or changes.",
+      "type": "object",
+      "properties": {
+        "impact": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "points": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "rule_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_id",
+        "points",
+        "required"
+      ]
+    },
+    "Verdict": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "review",
+        "incomplete",
+        "fail"
+      ]
+    }
+  }
+}

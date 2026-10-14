@@ -2,204 +2,328 @@
 
 <p align="center"><a href="README.md">🇹🇭 ภาษาไทย</a> &nbsp;|&nbsp; <strong>🇬🇧 English</strong></p>
 
-<h3 align="center">Security and compliance-readiness checks for your websites and code.<br/>OpenComply tells you what's missing, how to fix it and where, in a form both people and AI can read.</h3>
+<h3 align="center">Website security checks<br/>that tell you what's missing, how to fix it and where, in a form developers and AI agents can build on.</h3>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-early_development-f59e0b?style=flat-square" alt="Status: early development" />
+  <img src="https://img.shields.io/badge/version-0.1.0-f59e0b?style=flat-square" alt="Version 0.1.0" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-22c55e?style=flat-square" alt="Apache-2.0 License" /></a>
   <img src="https://img.shields.io/badge/rust-1.90-0891b2?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.90" />
-  <img src="https://img.shields.io/badge/designed_for-Claude_Code_%7C_Codex_%7C_Cursor_%7C_Gemini_CLI-7C3AED?style=flat-square" alt="Designed for Claude Code, Codex, Cursor and Gemini CLI" />
+  <img src="https://img.shields.io/badge/works_with-Claude_Code_%7C_Codex_%7C_Cursor_%7C_Gemini_CLI-7C3AED?style=flat-square" alt="Works with Claude Code, Codex, Cursor and Gemini CLI" />
 </p>
 
-> [!NOTE]
-> OpenComply is in early development and has no release yet. The commands and output below show what it will ship with.
+## Overview
 
-## What it checks
+OpenComply is **a single CLI engine** that checks targets against versioned, signed rules and returns structured output. Pass and fail come only from the engine; AI agents, CI/CD and other tools call it and present or act on the results.
 
 | Module | Checks | Result |
 |---|---|---|
-| **HTTP Security Headers** | HSTS, CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, clickjacking protection, HTTPS enforcement, cookies, information disclosure | Grade A+ – F |
-| **SSL/TLS** | Certificate, TLS 1.2/1.3, legacy protocols, cipher suites, key exchange, forward secrecy | Grade A+ – F |
-| **ISO/IEC 27001:2022** | Repository evidence against ISMS requirements and controls | Readiness level 0–4 |
-| **ISO/IEC 42001:2023** | Repository evidence against AI management system requirements and controls | Readiness level 0–4 |
+| **HTTP Security Headers** | HSTS, CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, clickjacking, HTTPS enforcement, cookies, information disclosure | Grade A+ – F with a 0–100 score |
 
-Every result carries evidence, a rule ID and a rule version, so it can be traced back. OpenComply also identifies the platforms and technologies behind the system (for example Cloudflare, Vercel, nginx, WordPress and Next.js) so it can tell you **where** each fix belongs.
+## Integrations
 
-## Using it with an AI agent
+| Method | Use |
+|---|---|
+| **CLI** | Run `opencomply` from a terminal or script |
+| **AI agent** | Claude Code, Codex, Cursor, Gemini CLI or any agent that can run commands calls the CLI and reads the summary or JSON |
+| **CI/CD** | Use the exit code and JSON as pipeline conditions (optional, see [CI/CD](#cicd-advanced)) |
 
-Ask in plain language. The AI agent runs OpenComply and summarizes the results like this:
+OpenComply is a CLI that AI agents can call, **not an AI model**, and no AI takes part in deciding results. OpenComply checks and reports; it never modifies source code. Whether recommendations are applied to code depends on the user and on the permissions of the connected AI agent.
+
+An example of how an AI agent may summarize the same results shown below:
 
 > **You:** Check the security headers of example.com.
 >
-> **AI:** Done. **Not passing yet: 2 items to fix and 1 decision for you.** The other 6 checks passed. The site is served through **Cloudflare**.
+> **AI:** **Grade D (63)**: 3 items to fix, 6 checks passed. The site runs **Next.js** behind **Cloudflare**.
 >
-> 🟠 **1. Permissions-Policy is missing** · HDR-005 · low. *This is the easiest fix, so start here.*<br/>
-> Set it in Cloudflare under **Rules → Transform Rules → Modify Response Header**:
+> 🔴 **1. CSP allows inline scripts** · HDR-002 · high. Fixing only this raises the score to 89 (B), and A+ requires it.<br/>
+> The recommended place is Next.js middleware, which creates a new nonce per request; a static Cloudflare Transform Rule cannot add a per-request nonce. Change only `script-src` and keep the existing hosts:
 > ```
-> Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+> script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com
 > ```
+> This is a starting point, not a drop-in policy. Review the whole existing CSP, including third-party scripts and Next.js hydration, and test with `Content-Security-Policy-Report-Only` before enforcing.
 >
-> 🔴 **2. CSP allows inline scripts** · HDR-002 · medium<br/>
-> If the site has an XSS flaw, injected scripts would run immediately. Use a nonce instead of `'unsafe-inline'`. **This must be fixed in the application, not in Cloudflare**: Cloudflare can only set static values, and a nonce must be new for every response.
-> ```
-> script-src 'self' 'nonce-<per-response-random>'
-> ```
-> This is an example. Changing this one value does not make the CSP secure on its own: review the other directives too, and test with `Content-Security-Policy-Report-Only` before enforcing to confirm the application still works. Would you like me to review the code and draft the change?
+> 🟠 **2. Permissions-Policy is missing** · HDR-005 · low. Fixing 1 and 2 gives **A+ (95)**.
 >
-> 🟡 **For your decision: the `Server: cloudflare` header** · HDR-010<br/>
-> Cloudflare sets this header and it shows no version, so the risk is generally low. Is this acceptable?
+> 🟠 **3. `X-Powered-By: Next.js`** · HDR-010 · low. Set `poweredByHeader: false` in `next.config.js`.
 
-The AI states the overall result first, explains it in clear and simple language, says where each fix belongs, cites the rule ID and **asks you** about anything that needs a decision. Pass and fail always come from OpenComply, and the AI changes code only with your approval.
+## Dynamic behavior: guidance for the actual environment
+
+OpenComply reads evidence from the response and picks guidance that matches the detected stack.
+
+| Detected | Effect on guidance |
+|---|---|
+| Platform from headers, cookies and HTML (53 platforms, e.g. Cloudflare, Vercel, nginx, IIS, WordPress, Laravel, Next.js) | Platform-specific fix (`how (…)`) and caveats (`note (…)`), up to 2 places |
+| Several layers can fix it, e.g. Cloudflare + Next.js | Marks the place to fix first (`preferred`), e.g. nonces belong in the app, not the CDN |
+| Current header values, e.g. the existing CSP | Builds `example:` from the site's own values: keeps existing hosts, removes only the unsafe parts, names the directive to change |
+| Content-Type is not HTML (e.g. a JSON API) | Browser-only rules (CSP, Permissions-Policy, clickjacking) become `N/A` |
+| `http://` behavior | Separates no redirect, temporary redirect (302/307) and permanent redirect (301/308) |
+
+**Observed vs inferred:** header values that decide a result are `verified`; platforms are `inferred` and only select guidance — **they never change PASS / FAIL**.
+
+## Example output
+
+All three formats below are generated by the real renderer from one synthetic data set (example.com).
 
 <details>
-<summary><strong>Raw output the AI reads</strong> (<code>opencomply scan headers …</code>)</summary>
+<summary><strong>Summary</strong> (default)</summary>
 
 ```console
-$ opencomply scan headers https://example.com
-headers https://example.com verdict=fail pass=6 fail=2 unknown=0 review=1 no_evidence=0 n/a=1 platform=cloudflare
-FAIL HDR-002 medium CSP allows inline scripts
-  why: script-src contains 'unsafe-inline', so any injected inline script runs
-  fix: replace 'unsafe-inline' in script-src with a per-response nonce
-  example: script-src 'self' 'nonce-<per-response-random>'
-  how (cloudflare): set the CSP in the application (origin), not in Cloudflare
-  note (cloudflare): Transform Rules only set static values; per-request nonces need the app or a Worker
+$ opencomply scan headers https://example.com/
+
+headers https://example.com/ verdict=fail grade=D score=63 pass=6 fail=3 unknown=0 review=0 no_evidence=0 n/a=1 platform=cloudflare+nextjs
+to C: HDR-002 +26 required → B 89
+to A+: HDR-002 +26 required · HDR-005 +6 required → A+ 95
+  impact (HDR-002): Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes
+  impact of HDR-005: --all
+FAIL HDR-002 high Content-Security-Policy
+  why: script-src allows 'unsafe-inline', so an injected <script> still runs
+  fix: enforce a CSP whose script-src allows no inline or wildcard scripts
+  example: change only script-src: script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com
+  how (nextjs, preferred): middleware (proxy): create a nonce per request, set the CSP header and read it with headers() in the layout
+  how (cloudflare): Rules > Transform Rules > Modify Response Header > Set static: Content-Security-Policy
+  note (cloudflare): A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker
 FAIL HDR-005 low Permissions-Policy missing
-  why: response has no Permissions-Policy header
-  fix: add a Permissions-Policy that disables unused features
-  example: Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
-  how (cloudflare): Rules > Transform Rules > Modify Response Header > Set static header
-REVIEW HDR-010 info Hosting platform disclosed
-  why: header is set by the hosting platform, not by the site
-  decide: is revealing the hosting platform acceptable for this site?
-next: fix 2, decide 1 · evidence: --format markdown
+  why: response has no permissions-policy header
+  fix: send a Permissions-Policy that turns off features the site does not use
+  example: Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  how (cloudflare): Rules > Transform Rules > Modify Response Header > Set static: Permissions-Policy
+  how (nextjs): next.config.js headers(): { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" }
+FAIL HDR-010 low Technology disclosure
+  why: x-powered-by reveals the software or version, which helps attackers match known vulnerabilities
+  fix: remove X-Powered-By and version numbers from Server and similar headers
+  how (nextjs, preferred): next.config.js: poweredByHeader: false
+  how (cloudflare): Rules > Transform Rules > Modify Response Header > Remove: X-Powered-By
+next: fix 3 · evidence: --format markdown
 ```
 
 | Line | Meaning |
 |---|---|
-| First line | Overall result (`verdict`: `pass` · `review` · `incomplete` · `fail`), the count for each status, and the detected platforms |
-| `FAIL` / `REVIEW` | Rule ID · severity · what was found, most important first |
-| `why:` | What is missing, or why this result was given |
-| `fix:` | What to do |
-| `example:` | An **example** setting. Adapt it to your system before use, and always replace anything in `<...>` |
-| `how (…)` / `note (…)` | Where to fix it on that platform, and any caveats |
-| `decide:` | A question **you** need to decide |
-| `next:` | Next steps |
+| First line | module · target · `verdict` · grade and score · count per status · detected platforms |
+| `to …:` | Rules to fix for the target grade, points each adds (`required` = cannot be skipped), and `→` the actual result after fixing |
+| `impact` | What fixing that rule changes (`--all` shows every step) |
+| `FAIL` / `REVIEW` / `UNKNOWN` | Status · rule ID · severity · finding, most important first |
+| `why:` · `fix:` · `example:` | Reason · action · example setting (replace anything in `<...>` and adapt it to your system) |
+| `how (…)` / `note (…)` | Where to fix it on that platform, and caveats · `preferred` = recommended place |
+| `decide:` | A decision for the user (only on `REVIEW` / `UNKNOWN`) |
+| `next:` | What to do next |
 
 </details>
 
 <details>
-<summary><strong>Audit report</strong> (<code>--format markdown</code>)</summary>
+<summary><strong>Evidence-based Assessment Report</strong> (<code>--format markdown</code>)</summary>
 
 ```markdown
+
 # OpenComply report — headers
 
 | | |
 |---|---|
-| Target | `https://example.com` |
-| Verdict | **FAIL** — fix 2, decide 1 |
-| Results | 6 passed · 2 failed · 0 unknown · 1 needs review · 0 no evidence · 1 not applicable |
+| Target | `https://example.com/` |
+| Verdict | **FAIL** — fix 3 |
+| Grade | **D** (63/100) |
+| Results | 6 passed · 3 failed · 0 unknown · 0 needs review · 0 no evidence · 1 not applicable |
 | Scanner | 0.1.0 · report schema 1 |
-| Platform | Cloudflare (CDN / WAF, from `CF-RAY: 8f1c2a3b4d5e6f70-BKK`) — detected from response headers, used only for fix guidance |
+| Rule packs | opencomply-headers 1.0.0 (signed by opencomply-2026, sha256 `b256d2d6244f…`) |
+| Platform | Cloudflare (CDN / WAF, from `cf-ray: 8f1c2a3b4d5e6f70-BKK`) · Next.js (framework / CMS, from `x-powered-by: Next.js`) — detected from response headers, used only for fix guidance |
+
+## How to raise the grade
+
+| Target | Check | Points | Required | Impact of passing it |
+|---|---|---|---|---|
+| C (→ B 89) | HDR-002 | +26 | yes | Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes |
+| A+ (→ A+ 95) | HDR-002 | +26 | yes | Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes |
+| A+ (→ A+ 95) | HDR-005 | +6 | yes | Features not listed (camera, location, payment) stop working, including in embedded frames |
 
 ## Needs action
 
 | Rule | Version | Severity | Finding | Why | Evidence | Fix | Example | Where to fix |
 |---|---|---|---|---|---|---|---|---|
-| HDR-002 | 1.0.0 | medium | CSP allows inline scripts | script-src contains 'unsafe-inline', so any injected inline script runs | GET https://example.com `Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'` | Generate a new random nonce for every response, add it to script-src and to each inline script, then remove 'unsafe-inline'. Review the other directives and test in Content-Security-Policy-Report-Only mode before enforcing. | `script-src 'self' 'nonce-<per-response-random>'` | **cloudflare:** set the CSP in the application (origin), not in Cloudflare — ⚠ Transform Rules only set static values; per-request nonces need the app or a Worker |
-| HDR-005 | 1.0.0 | low | Permissions-Policy missing | response has no Permissions-Policy header | GET https://example.com `(header not present)` | Disable every browser feature the site does not use; keep (self) only for features it needs. | `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()` | **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Set static header |
-
-## Needs your review
-
-### HDR-010 · Hosting platform disclosed
-
-- **Status:** REVIEW · severity info · rule version 1.0.0
-- **Why:** header is set by the hosting platform, not by the site
-- **Evidence (verified):** GET https://example.com — `Server: cloudflare`
-- **Decide:** is revealing the hosting platform acceptable for this site?
-- **Guidance:** Usually low risk when no version is shown. Accept and document it.
+| HDR-002 | 1.0.0 | high | Content-Security-Policy | script-src allows 'unsafe-inline', so an injected &lt;script&gt; still runs | GET https://example.com/ `content-security-policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; frame-ancestors 'self'` | CSP limits which scripts can run, so injected code (XSS) is blocked. Generate a new random nonce per response and put it on every &lt;script&gt;, or use hashes for fixed inline scripts. The example is a starting point, not a drop-in policy: review the whole existing CSP, check third-party scripts and framework hydration, roll out with Content-Security-Policy-Report-Only, fix what it reports, then enforce. | `change only script-src: script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com` | **nextjs:** middleware (proxy): create a nonce per request, set the CSP header and read it with headers() in the layout; **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Set static: Content-Security-Policy — ⚠ A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker |
+| HDR-005 | 1.0.0 | low | Permissions-Policy missing | response has no permissions-policy header | GET https://example.com/ `(header not present)` | Permissions-Policy turns off browser features (camera, microphone, location, payment) the site does not use, so injected or embedded code cannot use them. List only features the site needs with (self). | `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()` | **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Set static: Permissions-Policy; **nextjs:** next.config.js headers(): { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" } |
+| HDR-010 | 1.0.0 | low | Technology disclosure | x-powered-by reveals the software or version, which helps attackers match known vulnerabilities | GET https://example.com/ `x-powered-by: Next.js` | Version headers let attackers look up known vulnerabilities for your exact software without probing. Removing them is not a fix for outdated software, but it stops free reconnaissance. Keep the software updated as well. |  | **nextjs:** next.config.js: poweredByHeader: false; **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Remove: X-Powered-By |
 ```
 
 </details>
 
 <details>
-<summary><strong>JSON for AI agents and CI</strong> (<code>--format json</code>)</summary>
+<summary><strong>JSON</strong> (<code>--format json</code>)</summary>
 
-A single line with the summary before the findings, so an agent can read the result from the start of the output. By default only items that need action are listed (here: 2 failures and 1 review item); add `--all` to include passing checks. The full structure is defined by the JSON Schema.
+A single line with `verdict`, `grade` and `summary` before `findings`. By default only items that need action are listed (`--all` lists everything).
 
 ```json
-{"schema_version":1,"scanner_version":"0.1.0","module":"headers","target":"https://example.com","platforms":[{"id":"cloudflare","name":"Cloudflare","layer":"cdn","evidence":{"class":"inferred","source":"GET https://example.com","detail":"CF-RAY: 8f1c2a3b4d5e6f70-BKK"}}],"verdict":"fail","summary":{"pass":6,"fail":2,"unknown":0,"not_applicable":1,"needs_review":1,"insufficient_evidence":0},"findings":[{"rule_id":"HDR-002","rule_version":"1.0.0","title":"CSP allows inline scripts","status":"fail","severity":"medium","evidence":[{"class":"verified","source":"GET https://example.com","detail":"Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'"}],"reason":"script-src contains 'unsafe-inline', so any injected inline script runs","fix_hint":"replace 'unsafe-inline' in script-src with a per-response nonce","example_fix":"script-src 'self' 'nonce-<per-response-random>'","platform_fixes":[{"platform":"cloudflare","how":"set the CSP in the application (origin), not in Cloudflare","note":"Transform Rules only set static values; per-request nonces need the app or a Worker"}],"remediation":"Generate a new random nonce for every response, add it to script-src and to each inline script, then remove 'unsafe-inline'. Review the other directives and test in Content-Security-Policy-Report-Only mode before enforcing."},{"rule_id":"HDR-005","rule_version":"1.0.0","title":"Permissions-Policy missing","status":"fail","severity":"low","evidence":[{"class":"verified","source":"GET https://example.com","detail":"(header not present)"}],"reason":"response has no Permissions-Policy header","fix_hint":"add a Permissions-Policy that disables unused features","example_fix":"Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()","platform_fixes":[{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Set static header"}],"remediation":"Disable every browser feature the site does not use; keep (self) only for features it needs."},{"rule_id":"HDR-010","rule_version":"1.0.0","title":"Hosting platform disclosed","status":"needs_review","severity":"info","evidence":[{"class":"verified","source":"GET https://example.com","detail":"Server: cloudflare"}],"reason":"header is set by the hosting platform, not by the site","review_question":"is revealing the hosting platform acceptable for this site?","remediation":"Usually low risk when no version is shown. Accept and document it."}]}
+
+{"schema_version":1,"scanner_version":"0.1.0","module":"headers","target":"https://example.com/","rule_packs":[{"id":"opencomply-headers","version":"1.0.0","sha256":"b256d2d6244f568acd376cc1cd747b9a0728402d21e31836b0ee2c04bf9af605","signed_by":"opencomply-2026"}],"platforms":[{"id":"cloudflare","name":"Cloudflare","layer":"cdn","evidence":{"class":"inferred","source":"GET https://example.com/","detail":"cf-ray: 8f1c2a3b4d5e6f70-BKK"}},{"id":"nextjs","name":"Next.js","layer":"framework","evidence":{"class":"inferred","source":"GET https://example.com/","detail":"x-powered-by: Next.js"}}],"verdict":"fail","grade":{"grade":"D","score":63,"upgrades":[{"to":"C","steps":[{"rule_id":"HDR-002","points":26,"required":true,"impact":"Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes"}],"result":"B","result_score":89},{"to":"A+","steps":[{"rule_id":"HDR-002","points":26,"required":true,"impact":"Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes"},{"rule_id":"HDR-005","points":6,"required":true,"impact":"Features not listed (camera, location, payment) stop working, including in embedded frames"}],"result":"A+","result_score":95}]},"summary":{"pass":6,"fail":3,"unknown":0,"not_applicable":1,"needs_review":0,"insufficient_evidence":0},"findings":[{"rule_id":"HDR-002","rule_version":"1.0.0","title":"Content-Security-Policy","status":"fail","severity":"high","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"content-security-policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; frame-ancestors 'self'"}],"reason":"script-src allows 'unsafe-inline', so an injected <script> still runs","fix_hint":"enforce a CSP whose script-src allows no inline or wildcard scripts","example_fix":"change only script-src: script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com","platform_fixes":[{"platform":"nextjs","how":"middleware (proxy): create a nonce per request, set the CSP header and read it with headers() in the layout","preferred":true},{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Set static: Content-Security-Policy","note":"A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker"}],"remediation":"CSP limits which scripts can run, so injected code (XSS) is blocked. Generate a new random nonce per response and put it on every <script>, or use hashes for fixed inline scripts. The example is a starting point, not a drop-in policy: review the whole existing CSP, check third-party scripts and framework hydration, roll out with Content-Security-Policy-Report-Only, fix what it reports, then enforce."},{"rule_id":"HDR-005","rule_version":"1.0.0","title":"Permissions-Policy missing","status":"fail","severity":"low","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"(header not present)"}],"reason":"response has no permissions-policy header","fix_hint":"send a Permissions-Policy that turns off features the site does not use","example_fix":"Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()","platform_fixes":[{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Set static: Permissions-Policy"},{"platform":"nextjs","how":"next.config.js headers(): { key: \"Permissions-Policy\", value: \"camera=(), microphone=(), geolocation=()\" }"}],"remediation":"Permissions-Policy turns off browser features (camera, microphone, location, payment) the site does not use, so injected or embedded code cannot use them. List only features the site needs with (self)."},{"rule_id":"HDR-010","rule_version":"1.0.0","title":"Technology disclosure","status":"fail","severity":"low","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"x-powered-by: Next.js"}],"reason":"x-powered-by reveals the software or version, which helps attackers match known vulnerabilities","fix_hint":"remove X-Powered-By and version numbers from Server and similar headers","platform_fixes":[{"platform":"nextjs","how":"next.config.js: poweredByHeader: false","preferred":true},{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Remove: X-Powered-By"}],"remediation":"Version headers let attackers look up known vulnerabilities for your exact software without probing. Removing them is not a fix for outdated software, but it stops free reconnaissance. Keep the software updated as well."}]}
 ```
 
 </details>
 
-## Get started
+## Output contract
 
-```bash
-opencomply scan headers https://example.com      # HTTP security headers
-opencomply scan tls https://example.com          # SSL/TLS
-opencomply scan iso27001 ./my-repo               # ISO/IEC 27001 readiness
-opencomply scan iso42001 ./my-repo               # ISO/IEC 42001 readiness
-opencomply standards                             # supported standards and versions
-```
+### Result statuses
 
-| Option | Use |
-|---|---|
-| *(none)* | Short summary that is easy to read and uses few tokens |
-| `--format json` | For AI agents, CI and other tools |
-| `--format markdown` | Audit report with evidence |
-| `--all` | Also show checks that passed |
-| `--fail-on review` | For CI: treat undecided items as failures |
+| Summary | JSON `status` | Meaning | Counts as |
+|---|---|---|---|
+| `PASS` | `pass` | Meets the criterion | Pass |
+| `FAIL` | `fail` | Does not meet the criterion; fix it | Fail |
+| `REVIEW` | `needs_review` | Needs a user decision, e.g. a temporary redirect or a cookie JavaScript may need to read | Not passed |
+| `UNKNOWN` | `unknown` | Could not be checked (e.g. an unreadable value) — **never treated as a pass** | Incomplete |
+| `NO-EVIDENCE` | `insufficient_evidence` | Not enough evidence to conclude (does not occur in HTTP Security Headers) | Not passed |
+| `N/A` | `not_applicable` | The rule does not apply to this target, e.g. no cookies or a JSON API | Excluded from the score |
 
-> [!IMPORTANT]
-> **CI usage:** if every item must be decided before a merge or deploy, you **must use `--fail-on review`**. By default the exit code is 0 when only items for review remain.
->
-> ```bash
-> opencomply scan headers https://example.com --format json --fail-on review
-> ```
+`verdict` combines them into one word: `fail` (any FAIL) → `incomplete` (any UNKNOWN) → `review` (any REVIEW / NO-EVIDENCE) → `pass`.
 
-<details>
-<summary><strong>Exit codes</strong></summary>
+### Exit codes
 
 | Code | Meaning |
 |---|---|
-| 0 | Passed, or only items for review remain (`verdict=review`), which is **not** a pass. With `--fail-on review` this case returns 1 instead |
-| 1 | Items need fixing |
-| 2 | Invalid usage |
-| 3 | Assessment incomplete |
-| 4 | Error |
+| 0 | `pass` or `review` — `review` is **not** a pass, and returns 1 with `--fail-on review` |
+| 1 | `fail` |
+| 2 | Invalid usage, or a target that is not allowed (e.g. a private IP) |
+| 3 | `incomplete`, or the check did not finish in time |
+| 4 | Error, e.g. the target could not be reached |
 
-</details>
+### JSON Schema and compatibility
+
+- Report schema: `opencomply schema report` (or [`schemas/report.schema.json`](schemas/report.schema.json))
+- `schema_version` increases on any change that is not backward compatible. New optional fields may be added without changing `schema_version`; consumers should ignore unknown fields.
+- Before v1.0 the structure may still change, but every incompatible change bumps `schema_version`.
+
+### Traceability
+
+Every finding carries `rule_id`, `rule_version` and evidence (`evidence`: `source` + `detail`). The report carries `scanner_version` and the rule packs used (`id`, `version`, `sha256`, `signed_by`), so results from the same target and rule pack are reproducible and traceable.
+
+## Scoring and grades
+
+- **Score (0–100)** = weight of passing rules ÷ total weight of applicable rules (`PASS` counts fully, `REVIEW` half, `N/A` is excluded). Each rule's weight is defined in the rule pack.
+- **Grade from score:** A+ 95–100 · A 90–94 · B 80–89 · C 70–79 · D 50–69 · F 0–49
+- **Grade caps** (a high score cannot make up for a serious weakness):
+
+| Condition | Effect |
+|---|---|
+| A mandatory rule fails (HSTS, CSP, clickjacking, HTTPS enforcement) | At most C |
+| A high / critical rule fails | At most B |
+| A mandatory rule is REVIEW, or a high / critical rule is undecided | No A+ |
+| A mandatory rule is UNKNOWN | No grade (`N/A`) |
+
+- **Path to a higher grade** (`to …:`) lists only the rules needed, largest gain first, and shows the actual result after fixing (`→`), which can exceed the target. In the example, fixing HDR-002 alone gives 89 (B); A+ needs HDR-002 and HDR-005 for 95, and HDR-010 is not needed for A+.
+
+## Trust model
+
+| Evidence class | Meaning |
+|---|---|
+| `verified` | A value read from the response and used to decide a result |
+| `inferred` | Inferred information, e.g. the platform; only selects guidance and never decides a result |
+| `manual_review` | Needs a person or expert to judge |
+
+- Results come from comparing evidence with rules directly — no AI and no randomness — so the same evidence and rule pack give the same result (live results can differ if the site's responses change).
+- Values that cannot be read or checked become `UNKNOWN`, and matters that need judgement become `REVIEW`; neither counts as `PASS`.
+- Official rule packs are checked with an Ed25519 signature before loading; a modified file is not used.
+- Secrets in output (cookie values, tokens, passwords) are redacted in every format.
+
+## Extending OpenComply
+
+Extensions to OpenComply are **data, not code**. No plugin that executes code is loaded into the scanner, which keeps results reproducible and reduces the plugin-related attack surface.
+
+| Capability | Details |
+|---|---|
+| Rule pack format (TOML) and JSON Schema | `opencomply schema rule-pack` |
+| Rule pack validation (schema, semantics, conflicts between packs, signature) | `opencomply rules validate <files…>` |
+| Operators | An allowlist plus named built-in checks; no expressions or scripts |
+| Rule pack used by `scan` | The official pack embedded in the binary, signature-checked before every use |
+| New checks | Contributed to the main source code, see [CONTRIBUTING](CONTRIBUTING.md) |
+
+## Install
+
+Download a file from [Releases](https://github.com/vampirebeam/OpenComply/releases) and check it against the attached `.sha256`.
+
+```bash
+# Linux x86_64 / macOS Apple Silicon
+sha256sum -c opencomply-v0.1.0-<target>.tar.gz.sha256      # macOS: shasum -a 256 -c …
+tar -xzf opencomply-v0.1.0-<target>.tar.gz
+./opencomply-v0.1.0-<target>/opencomply --version
+```
+
+```powershell
+# Windows x86_64
+Get-FileHash opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256   # compare with the .sha256 file
+Expand-Archive opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -DestinationPath .
+.\opencomply-v0.1.0-x86_64-pc-windows-msvc\opencomply.exe --version
+```
+
+The v0.1.0 binaries are not signed by Apple or Microsoft, so the operating system may show a warning on first run.
+
+## Usage
+
+```bash
+opencomply scan headers https://example.com      # HTTP security headers
+opencomply standards                             # supported standards, scanner and report schema versions
+opencomply schema report                         # JSON Schema of the report
+```
+
+A headers check fetches 2 URLs: the page you give, and the `http://` version of the same URL to check HTTPS enforcement, following at most 5 redirects each. Every request is a GET with the User-Agent `OpenComply/<version>` and sends no cookies and no request body.
+
+### Output formats and options
+
+OpenComply supports several output formats, for developers, automation tools and AI agents.
+
+| Option | Description |
+|---|---|
+| *(none)* | Short summary that is easy to read, concise and uses few tokens |
+| `--format json` | Export the results as JSON data for further processing |
+| `--format markdown` | Markdown report with details and evidence |
+| `--all` | Show every check, including those that passed |
+| `--fail-on review` | Make items that still need review (`REVIEW`) fail the command too |
+| `--allow-private` | Allow internal systems you are authorized to scan, such as staging (private IPs and cloud metadata are refused by default) |
+
+**Examples**
+
+Check security headers and show a summary:
+
+```bash
+opencomply scan headers https://example.com
+```
+
+Export the results as JSON:
+
+```bash
+opencomply scan headers https://example.com --format json
+```
+
+### CI/CD (advanced)
+
+OpenComply can run in automation such as GitHub Actions, GitLab CI/CD or Jenkins to check security during development and deployment.
+
+To make items that still need review (`REVIEW`) fail the pipeline, use:
+
+```bash
+opencomply scan headers https://example.com --format json --fail-on review
+```
+
+This option changes the command's exit code, so the pipeline can act on the result.
+
+> **Note:** CI/CD is not required. You can run OpenComply directly from a terminal or through an AI agent.
 
 ## Privacy and security
 
 | | |
 |---|---|
 | **No telemetry** | No usage data is collected, and no source code or results are sent back to the OpenComply developers |
-| **Network** | Website and TLS checks connect only to the target you specify (plus DNS). Repository checks use no network |
+| **Network** | Connects only to the target you specify (plus DNS). Refuses private IPs, loopback and cloud metadata on every redirect, guards against DNS rebinding, and bounds time and size on every request |
 | **AI agents** | Output an AI agent reads is sent to that agent's model provider under the provider's policy, not to OpenComply |
-| **Least privilege** | Runs with normal user rights, reads only, and treats rules as data that can never execute code |
+| **Least privilege** | Runs with normal user rights and reads only; never modifies files or code |
 
 ## Standards and criteria
 
-OpenComply evaluates against internationally recognized standards and current security practice, consolidated into its own versioned criteria.
-
-- **Technical checks:** grades come from weighted checks. Critical weaknesses cap the highest grade, and an incomplete assessment cannot receive the top grade.
-- **ISO readiness:** evidence is assessed against requirements and controls. Technical and organizational evidence are kept separate, and items that need expert judgement are identified.
-
-Grades and readiness levels are OpenComply's own criteria. They are not affiliated with, or equivalent to, any third-party rating service.
-
-### Limits of ISO assessment
-
-Scanning a repository alone **cannot prove that an information security management system (ISMS) or an AI management system (AIMS) is complete**. Many requirements depend on policy documents, processes, interviews and evidence of real operation. OpenComply marks these items as needing expert review or as having insufficient evidence instead of concluding on them, and its results are for readiness preparation only.
+OpenComply evaluates against internationally recognized standards and current security practice, consolidated into its own versioned criteria. Grades are OpenComply's own criteria. They are not affiliated with, or equivalent to, any third-party rating service.
 
 ## Contributing
 
+- [Contribution guidelines](CONTRIBUTING.md)
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Security policy and vulnerability reporting](SECURITY.md)
-- Contribution guidelines (CONTRIBUTING) will be published with the first release
 
 ## Disclaimer and license
 
-OpenComply is an independent assessment tool, **not an ISO certification body**. Results are not a certification of compliance and do not guarantee security. Only scan systems you are authorized to assess.
+OpenComply is an independent assessment tool, **not a certification body**. Results are not a certification of compliance and do not guarantee security. Only scan systems you are authorized to assess.
 
 Copyright 2026 vampirebeam · [Apache License 2.0](LICENSE) · [NOTICE](NOTICE)

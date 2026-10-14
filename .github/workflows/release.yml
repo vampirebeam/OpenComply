@@ -1,0 +1,88 @@
+# Release binaries for a pushed tag vX.Y.Z: build on each OS, package with LICENSE / NOTICE, attach to a DRAFT release
+# with a .sha256 per archive. The maintainer reviews and publishes the draft by hand.
+# Only this workflow gets `contents: write` (to upload release files); no other secrets, no signing keys in CI —
+# official rule packs must already carry their signature in the tag (checked before anything is built).
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  verify:
+    name: verify tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Version matches tag
+        run: |
+          version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          test "v${version}" = "${GITHUB_REF_NAME}" || { echo "Cargo.toml ${version} != tag ${GITHUB_REF_NAME}"; exit 1; }
+      - name: Official rule packs are signed
+        run: |
+          shopt -s nullglob
+          packs=(rules/*.toml)
+          if [ ${#packs[@]} -gt 0 ]; then cargo run --locked -q -p opencomply-cli -- rules validate "${packs[@]}"; fi
+
+  create:
+    name: create draft release
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$GITHUB_REF_NAME" --notes "Draft: review before publishing."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: create
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, ext: "" }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, ext: ".exe" }
+          - { os: macos-latest, target: aarch64-apple-darwin, ext: "" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        run: cargo build --release --locked -p opencomply-cli
+      - name: Package
+        shell: bash
+        run: |
+          name="opencomply-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$name"
+          cp "target/release/opencomply${{ matrix.ext }}" LICENSE NOTICE README.md "$name/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+            archive="$name.zip"
+          else
+            tar -czf "$name.tar.gz" "$name"
+            archive="$name.tar.gz"
+          fi
+          if command -v sha256sum > /dev/null; then sha256sum "$archive" > "$archive.sha256"; else shasum -a 256 "$archive" > "$archive.sha256"; fi
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - name: Upload to draft release
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" "$ARCHIVE.sha256" --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}

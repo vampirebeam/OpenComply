@@ -1,0 +1,362 @@
+# OpenComply official rule pack: HTTP security headers (HDR-001 – HDR-010).
+# Weights sum to 100; `mandatory` rules cap the grade when they fail. Must be signed before release.
+
+[pack]
+id = "opencomply-headers"
+version = "1.0.0"
+module = "headers"
+
+[[rule]]
+id = "HDR-001"
+version = "1.0.0"
+title = "Strict-Transport-Security"
+severity = "high"
+mandatory = true
+weight = 15
+check = { op = "builtin", name = "hsts" }
+fix_hint = "send HSTS with max-age of at least 180 days, after http:// redirects to https://"
+example_fix = "Strict-Transport-Security: max-age=31536000"
+upgrade_impact = "Browsers will refuse http:// to this host for max-age; with includeSubDomains every subdomain must have HTTPS too"
+remediation = "HSTS tells browsers to use HTTPS only, so a first http:// request cannot be intercepted. Make sure http:// redirects to https:// first (HDR-007). Start with max-age=31536000; add includeSubDomains only when every subdomain serves HTTPS."
+[rule.platforms.cloudflare]
+how = "SSL/TLS > Edge Certificates > HTTP Strict Transport Security (HSTS) > Enable, Max Age 12 months"
+note = "Turn on Always Use HTTPS first; include subdomains only if all of them have HTTPS"
+[rule.platforms.cloudfront]
+how = "CloudFront > Policies > Response headers > Security headers: Strict-Transport-Security, attach the policy to each behavior"
+[rule.platforms.vercel]
+how = '''vercel.json "headers": [{ "source": "/(.*)", "headers": [{ "key": "Strict-Transport-Security", "value": "max-age=31536000" }] }]'''
+[rule.platforms.netlify]
+how = '''netlify.toml: [[headers]] for = "/*" [headers.values] Strict-Transport-Security = "max-age=31536000"'''
+[rule.platforms.nginx]
+how = '''add_header Strict-Transport-Security "max-age=31536000" always; in the HTTPS server block'''
+note = "add_header inside a location block replaces every add_header from the server block"
+[rule.platforms.apache]
+how = '''Header always set Strict-Transport-Security "max-age=31536000" in the HTTPS VirtualHost (mod_headers)'''
+[rule.platforms.litespeed]
+how = '''.htaccess: Header always set Strict-Transport-Security "max-age=31536000"'''
+[rule.platforms.iis]
+how = '''IIS Manager > site > HSTS (IIS 10 1709+), or web.config customHeaders: <add name="Strict-Transport-Security" value="max-age=31536000" />'''
+[rule.platforms.plesk]
+how = "Websites & Domains > SSL/TLS Certificates > HSTS (SSL It!) > max-age 1 year"
+[rule.platforms.nextjs]
+how = '''next.config.js headers(): { source: "/(.*)", headers: [{ key: "Strict-Transport-Security", value: "max-age=31536000" }] }'''
+[rule.platforms.wordpress]
+how = "Set it on the web server or CDN in front of WordPress; a headers plugin works only for pages PHP serves"
+[rule.platforms.webflow]
+how = "Site settings > Publishing > Advanced publishing options > Enable HSTS"
+
+[[rule]]
+id = "HDR-002"
+version = "1.0.0"
+title = "Content-Security-Policy"
+severity = "high"
+mandatory = true
+weight = 25
+html_only = true
+check = { op = "builtin", name = "csp" }
+fix_hint = "enforce a CSP whose script-src allows no inline or wildcard scripts"
+example_fix = '''Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-<random-per-request>'; object-src 'none'; base-uri 'self'; frame-ancestors 'self''''
+review_question = "Does any script on this site need eval()? If not, remove 'unsafe-eval'."
+upgrade_impact = "Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes"
+remediation = "CSP limits which scripts can run, so injected code (XSS) is blocked. Generate a new random nonce per response and put it on every <script>, or use hashes for fixed inline scripts. The example is a starting point, not a drop-in policy: review the whole existing CSP, check third-party scripts and framework hydration, roll out with Content-Security-Policy-Report-Only, fix what it reports, then enforce."
+[rule.platforms.cloudflare]
+how = "Rules > Transform Rules > Modify Response Header > Set static: Content-Security-Policy"
+note = "A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker"
+[rule.platforms.cloudfront]
+how = "CloudFront > Policies > Response headers > Security headers: Content-Security-Policy"
+note = "Static value only; nonces must come from the origin app"
+[rule.platforms.vercel]
+how = "For nonces use Next.js middleware (proxy); for a static policy use vercel.json headers"
+[rule.platforms.netlify]
+how = '''netlify.toml [[headers]] for = "/*" [headers.values] Content-Security-Policy = "..."; nonces need an Edge Function'''
+[rule.platforms.nginx]
+how = '''add_header Content-Security-Policy "..." always; nonces: set them in the app, or sub_filter with $request_id'''
+[rule.platforms.apache]
+how = '''Header always set Content-Security-Policy "..."; nonces must come from the app'''
+[rule.platforms.litespeed]
+how = '''.htaccess: Header always set Content-Security-Policy "..."; nonces must come from the app'''
+[rule.platforms.iis]
+how = '''web.config customHeaders: <add name="Content-Security-Policy" value="..." />; nonces must come from the app'''
+note = "IIS cannot create per-request nonces by itself"
+[rule.platforms.plesk]
+how = '''Apache & nginx Settings > Additional nginx directives: add_header Content-Security-Policy "..." always;'''
+[rule.platforms.nextjs]
+how = "middleware (proxy): create a nonce per request, set the CSP header and read it with headers() in the layout"
+prefer = true
+[rule.platforms.wordpress]
+how = "Start with Report-Only: themes and plugins often use inline scripts; a CSP plugin with nonce support helps"
+note = "Test every plugin page before enforcing"
+[rule.platforms.webflow]
+how = "Webflow sets response headers only on Enterprise (custom security headers); otherwise use a proxy or CDN you control in front"
+note = "Webflow pages contain inline scripts; start with Report-Only"
+
+[[rule]]
+id = "HDR-003"
+version = "1.0.0"
+title = "X-Content-Type-Options"
+severity = "medium"
+weight = 10
+check = { op = "header_equals", header = "x-content-type-options", value = "nosniff" }
+fix_hint = "send X-Content-Type-Options: nosniff"
+example_fix = "X-Content-Type-Options: nosniff"
+upgrade_impact = "Files served with a wrong Content-Type (e.g. scripts as text/plain) stop loading"
+remediation = "nosniff stops browsers from guessing a file's type, so an uploaded text or image file cannot be run as a script or stylesheet. The value must be exactly nosniff."
+[rule.platforms.cloudflare]
+how = "Rules > Settings > Managed Transforms > Add security headers: On"
+note = "Also adds X-Frame-Options: SAMEORIGIN and Referrer-Policy: same-origin"
+[rule.platforms.cloudfront]
+how = "CloudFront > Policies > Response headers > Security headers: X-Content-Type-Options"
+[rule.platforms.vercel]
+how = '''vercel.json "headers": [{ "source": "/(.*)", "headers": [{ "key": "X-Content-Type-Options", "value": "nosniff" }] }]'''
+[rule.platforms.netlify]
+how = '''netlify.toml [[headers]] for = "/*" [headers.values] X-Content-Type-Options = "nosniff"'''
+[rule.platforms.nginx]
+how = "add_header X-Content-Type-Options nosniff always;"
+[rule.platforms.apache]
+how = "Header always set X-Content-Type-Options nosniff"
+[rule.platforms.litespeed]
+how = ".htaccess: Header always set X-Content-Type-Options nosniff"
+[rule.platforms.iis]
+how = '''web.config customHeaders: <add name="X-Content-Type-Options" value="nosniff" />'''
+[rule.platforms.plesk]
+how = "Apache & nginx Settings > Additional nginx directives: add_header X-Content-Type-Options nosniff always;"
+[rule.platforms.nextjs]
+how = '''next.config.js headers(): { key: "X-Content-Type-Options", value: "nosniff" }'''
+[rule.platforms.wordpress]
+how = "Set it on the web server or CDN in front of WordPress"
+[rule.platforms.webflow]
+how = "Enterprise: custom security headers; other plans: a proxy or CDN you control in front"
+
+[[rule]]
+id = "HDR-004"
+version = "1.0.0"
+title = "Referrer-Policy"
+severity = "low"
+weight = 5
+check = { op = "builtin", name = "referrer_policy" }
+fix_hint = "send Referrer-Policy: strict-origin-when-cross-origin (or stricter)"
+example_fix = "Referrer-Policy: strict-origin-when-cross-origin"
+upgrade_impact = "Other sites see only your origin, not full URLs; analytics that read referrer paths lose detail"
+remediation = "Referrer-Policy controls how much of the page URL is sent to other sites. Full URLs can leak tokens, search terms or IDs in query strings. Use strict-origin-when-cross-origin, or no-referrer for sensitive pages."
+[rule.platforms.cloudflare]
+how = "Rules > Settings > Managed Transforms > Add security headers (sets same-origin), or a Transform Rule"
+[rule.platforms.cloudfront]
+how = "CloudFront > Policies > Response headers > Security headers: Referrer-Policy"
+[rule.platforms.vercel]
+how = '''vercel.json headers: { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }'''
+[rule.platforms.netlify]
+how = '''netlify.toml [headers.values] Referrer-Policy = "strict-origin-when-cross-origin"'''
+[rule.platforms.nginx]
+how = "add_header Referrer-Policy strict-origin-when-cross-origin always;"
+[rule.platforms.apache]
+how = "Header always set Referrer-Policy strict-origin-when-cross-origin"
+[rule.platforms.litespeed]
+how = ".htaccess: Header always set Referrer-Policy strict-origin-when-cross-origin"
+[rule.platforms.iis]
+how = '''web.config customHeaders: <add name="Referrer-Policy" value="strict-origin-when-cross-origin" />'''
+[rule.platforms.plesk]
+how = "Additional nginx directives: add_header Referrer-Policy strict-origin-when-cross-origin always;"
+[rule.platforms.nextjs]
+how = '''next.config.js headers(): { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" }'''
+[rule.platforms.wordpress]
+how = "Set it on the web server or CDN in front of WordPress"
+
+[[rule]]
+id = "HDR-005"
+version = "1.0.0"
+title = "Permissions-Policy"
+severity = "low"
+weight = 5
+html_only = true
+check = { op = "header_present", header = "permissions-policy" }
+fix_hint = "send a Permissions-Policy that turns off features the site does not use"
+example_fix = "Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()"
+upgrade_impact = "Features not listed (camera, location, payment) stop working, including in embedded frames"
+remediation = "Permissions-Policy turns off browser features (camera, microphone, location, payment) the site does not use, so injected or embedded code cannot use them. List only features the site needs with (self)."
+[rule.platforms.cloudflare]
+how = "Rules > Transform Rules > Modify Response Header > Set static: Permissions-Policy"
+[rule.platforms.cloudfront]
+how = "CloudFront > Policies > Response headers > Custom headers: Permissions-Policy"
+[rule.platforms.vercel]
+how = '''vercel.json headers: { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }'''
+[rule.platforms.netlify]
+how = '''netlify.toml [headers.values] Permissions-Policy = "camera=(), microphone=(), geolocation=()"'''
+[rule.platforms.nginx]
+how = '''add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;'''
+[rule.platforms.apache]
+how = '''Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"'''
+[rule.platforms.litespeed]
+how = '''.htaccess: Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"'''
+[rule.platforms.iis]
+how = '''web.config customHeaders: <add name="Permissions-Policy" value="camera=(), microphone=(), geolocation=()" />'''
+[rule.platforms.plesk]
+how = '''Additional nginx directives: add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;'''
+[rule.platforms.nextjs]
+how = '''next.config.js headers(): { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" }'''
+[rule.platforms.wordpress]
+how = "Set it on the web server or CDN in front of WordPress"
+
+[[rule]]
+id = "HDR-006"
+version = "1.0.0"
+title = "Clickjacking protection"
+severity = "medium"
+mandatory = true
+weight = 10
+html_only = true
+check = { op = "builtin", name = "clickjacking" }
+fix_hint = "add CSP frame-ancestors 'self' (or X-Frame-Options: SAMEORIGIN)"
+example_fix = "Content-Security-Policy: frame-ancestors 'self'"
+upgrade_impact = "Other sites can no longer embed the page in a frame; widgets meant to be embedded need those sites listed"
+remediation = "Without frame protection another site can show this page in an invisible frame and trick users into clicking buttons (clickjacking). frame-ancestors in CSP is the current control; X-Frame-Options DENY or SAMEORIGIN covers older browsers."
+[rule.platforms.cloudflare]
+how = "Rules > Settings > Managed Transforms > Add security headers (adds X-Frame-Options: SAMEORIGIN)"
+[rule.platforms.cloudfront]
+how = "CloudFront > Policies > Response headers > Security headers: X-Frame-Options SAMEORIGIN"
+[rule.platforms.vercel]
+how = '''vercel.json headers: { "key": "X-Frame-Options", "value": "SAMEORIGIN" }'''
+[rule.platforms.netlify]
+how = '''netlify.toml [headers.values] X-Frame-Options = "SAMEORIGIN"'''
+[rule.platforms.nginx]
+how = "add_header X-Frame-Options SAMEORIGIN always; (or frame-ancestors in your CSP)"
+[rule.platforms.apache]
+how = "Header always set X-Frame-Options SAMEORIGIN (or frame-ancestors in your CSP)"
+[rule.platforms.litespeed]
+how = ".htaccess: Header always set X-Frame-Options SAMEORIGIN"
+[rule.platforms.iis]
+how = '''web.config customHeaders: <add name="X-Frame-Options" value="SAMEORIGIN" />'''
+[rule.platforms.plesk]
+how = "Additional nginx directives: add_header X-Frame-Options SAMEORIGIN always;"
+[rule.platforms.nextjs]
+how = '''next.config.js headers(): { key: "X-Frame-Options", value: "SAMEORIGIN" }'''
+[rule.platforms.wordpress]
+how = "WordPress sends X-Frame-Options only on login and admin pages; set it on the server or CDN for all pages"
+[rule.platforms.webflow]
+how = "Enterprise: custom security headers; other plans: a proxy or CDN you control in front"
+
+[[rule]]
+id = "HDR-007"
+version = "1.0.0"
+title = "HTTPS enforcement"
+severity = "high"
+mandatory = true
+weight = 15
+check = { op = "builtin", name = "https_redirect" }
+fix_hint = "redirect every http:// request to https:// with 301 or 308"
+example_fix = "http://example.com/ → 301 → https://example.com/"
+review_question = "Is the temporary redirect intentional? If not, make it 301 or 308."
+upgrade_impact = "All http:// links and bookmarks are moved to https://; mixed http:// resources on the pages must be fixed"
+remediation = "If http:// still serves the page, anyone on the network (public Wi-Fi, ISP) can read or change it. Redirect all http:// requests to the same path on https:// with a permanent redirect (301 or 308), then add HSTS (HDR-001)."
+[rule.platforms.cloudflare]
+how = "SSL/TLS > Edge Certificates > Always Use HTTPS: On"
+[rule.platforms.cloudfront]
+how = "CloudFront > Behaviors > Viewer protocol policy: Redirect HTTP to HTTPS"
+[rule.platforms.vercel]
+how = "Automatic on Vercel domains (308); check custom domains under Settings > Domains"
+[rule.platforms.netlify]
+how = "Domain management > HTTPS: Force HTTPS is on by default once the certificate is issued"
+[rule.platforms.nginx]
+how = "server { listen 80; server_name example.com; return 301 https://$host$request_uri; }"
+[rule.platforms.apache]
+how = "In the port 80 VirtualHost: Redirect permanent / https://example.com/"
+[rule.platforms.litespeed]
+how = ".htaccess: RewriteEngine On, RewriteCond %{HTTPS} off, RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]"
+[rule.platforms.iis]
+how = '''URL Rewrite rule: condition {HTTPS} off → Redirect https://{HTTP_HOST}/{R:1}, redirectType="Permanent"'''
+[rule.platforms.plesk]
+how = "Hosting Settings > Permanent SEO-safe 301 redirect from HTTP to HTTPS: On"
+[rule.platforms.wordpress]
+how = "Settings > General: both addresses https://, plus a 301 redirect on the server or CDN"
+[rule.platforms.webflow]
+how = "Site settings > Publishing > Advanced publishing options > Enable SSL (redirects http:// to https://)"
+
+[[rule]]
+id = "HDR-008"
+version = "1.0.0"
+title = "Security header syntax"
+severity = "medium"
+weight = 5
+check = { op = "builtin", name = "header_syntax" }
+fix_hint = "send each security header once, with valid syntax"
+upgrade_impact = "None for users; may require removing a duplicate header from one layer (app, server or CDN)"
+remediation = "Browsers silently ignore security headers that are duplicated with different values or written in invalid syntax, so the protection you think you have is not active. Check every layer (app, server, CDN) for headers added twice."
+
+[[rule]]
+id = "HDR-009"
+version = "1.0.0"
+title = "Cookie security"
+severity = "medium"
+weight = 5
+check = { op = "builtin", name = "cookies" }
+fix_hint = "mark cookies Secure, HttpOnly (unless scripts need them) and SameSite=Lax"
+example_fix = "Set-Cookie: session=<value>; Path=/; Secure; HttpOnly; SameSite=Lax"
+review_question = "Does page JavaScript need to read these cookies? If not, add HttpOnly."
+upgrade_impact = "HttpOnly cookies can no longer be read by your own JavaScript; Secure cookies are not sent over http://"
+remediation = "Secure keeps cookies off http://, HttpOnly hides them from scripts (so XSS cannot steal sessions), SameSite=Lax limits cross-site requests (CSRF). Set them where the cookie is created: framework session settings or app code."
+[rule.platforms.php]
+how = "php.ini: session.cookie_secure=1, session.cookie_httponly=1, session.cookie_samesite=Lax"
+prefer = true
+[rule.platforms.laravel]
+how = "config/session.php: 'secure' => true, 'http_only' => true, 'same_site' => 'lax' (or SESSION_SECURE_COOKIE=true)"
+prefer = true
+[rule.platforms.django]
+how = "settings.py: SESSION_COOKIE_SECURE = True, CSRF_COOKIE_SECURE = True, SESSION_COOKIE_SAMESITE = 'Lax'"
+prefer = true
+[rule.platforms.rails]
+how = "config.force_ssl = true (marks cookies Secure); session store options: httponly: true, same_site: :lax"
+prefer = true
+[rule.platforms.express]
+how = "express-session cookie: { secure: true, httpOnly: true, sameSite: 'lax' }; behind a proxy also app.set('trust proxy', 1)"
+prefer = true
+[rule.platforms.aspnet]
+how = '''web.config: <httpCookies requireSSL="true" httpOnlyCookies="true" sameSite="Lax" />; ASP.NET Core: CookiePolicyOptions'''
+prefer = true
+[rule.platforms.java]
+how = "web.xml <session-config><cookie-config><secure>true</secure><http-only>true</http-only></cookie-config>"
+prefer = true
+[rule.platforms.nextjs]
+how = "cookies().set(name, value, { secure: true, httpOnly: true, sameSite: 'lax' })"
+prefer = true
+[rule.platforms.wordpress]
+how = "Core login cookies are HttpOnly; set FORCE_SSL_ADMIN true in wp-config.php and check plugin cookies"
+prefer = true
+[rule.platforms.cloudflare]
+how = "Fix the cookie where the app sets it; Cloudflare's own cookies (e.g. __cf_bm) are already Secure and HttpOnly"
+
+[[rule]]
+id = "HDR-010"
+version = "1.0.0"
+title = "Technology disclosure"
+severity = "low"
+weight = 5
+check = { op = "builtin", name = "info_disclosure" }
+fix_hint = "remove X-Powered-By and version numbers from Server and similar headers"
+upgrade_impact = "None for users; only hides version details"
+remediation = "Version headers let attackers look up known vulnerabilities for your exact software without probing. Removing them is not a fix for outdated software, but it stops free reconnaissance. Keep the software updated as well."
+[rule.platforms.cloudflare]
+how = "Rules > Transform Rules > Modify Response Header > Remove: X-Powered-By"
+[rule.platforms.cloudfront]
+how = "CloudFront > Policies > Response headers > Remove headers: X-Powered-By"
+[rule.platforms.nginx]
+how = "server_tokens off; PHP: fastcgi_hide_header X-Powered-By; proxy: proxy_hide_header X-Powered-By;"
+[rule.platforms.apache]
+how = "ServerTokens Prod, ServerSignature Off, Header always unset X-Powered-By"
+[rule.platforms.litespeed]
+how = "WebAdmin > Server > General > Server Signature: Hide Version; .htaccess: Header unset X-Powered-By"
+[rule.platforms.iis]
+how = '''web.config: customHeaders <remove name="X-Powered-By" />, <requestFiltering removeServerHeader="true" />'''
+note = "X-AspNet-Version: <httpRuntime enableVersionHeader=\"false\" />"
+[rule.platforms.php]
+how = "php.ini: expose_php = Off"
+prefer = true
+[rule.platforms.express]
+how = "app.disable('x-powered-by') or use helmet()"
+prefer = true
+[rule.platforms.nextjs]
+how = "next.config.js: poweredByHeader: false"
+prefer = true
+[rule.platforms.aspnet]
+how = '''web.config: <httpRuntime enableVersionHeader="false" />; customHeaders <remove name="X-Powered-By" />'''
+prefer = true
+[rule.platforms.wordpress]
+how = "php.ini expose_php = Off, and hide the server version on the web server"
