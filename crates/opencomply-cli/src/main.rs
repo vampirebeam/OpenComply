@@ -38,7 +38,7 @@ enum Command {
         /// Include passing and not-applicable findings
         #[arg(long, global = true)]
         all: bool,
-        /// Exit non-zero on `fail` (default) or also on undecided `review` items (CI strict mode)
+        /// Exit non-zero on `fail` (default), or also on undecided `review` items
         #[arg(long, value_enum, default_value_t = FailOnArg::Fail, global = true)]
         fail_on: FailOnArg,
         /// Allow private / internal addresses (e.g. a staging server you are authorised to scan)

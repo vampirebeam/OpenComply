@@ -19,6 +19,63 @@ OpenComply is **a single CLI engine** that checks targets against versioned, sig
 |---|---|---|
 | **HTTP Security Headers** | HSTS, CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, clickjacking, HTTPS enforcement, cookies, information disclosure | Grade A+ – F with a 0–100 score |
 
+## Install
+
+Download a file from [Releases](https://github.com/vampirebeam/OpenComply/releases) and check it against the attached `.sha256`.
+
+```bash
+# Linux x86_64 / macOS Apple Silicon
+sha256sum -c opencomply-v0.1.0-<target>.tar.gz.sha256      # macOS: shasum -a 256 -c …
+tar -xzf opencomply-v0.1.0-<target>.tar.gz
+./opencomply-v0.1.0-<target>/opencomply --version
+```
+
+```powershell
+# Windows x86_64
+Get-FileHash opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256   # compare with the .sha256 file
+Expand-Archive opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -DestinationPath .
+.\opencomply-v0.1.0-x86_64-pc-windows-msvc\opencomply.exe --version
+```
+
+The v0.1.0 binaries are not signed by Apple or Microsoft, so the operating system may show a warning on first run.
+
+## Usage
+
+```bash
+opencomply scan headers https://example.com      # HTTP security headers
+opencomply standards                             # supported standards, scanner and report schema versions
+opencomply schema report                         # JSON Schema of the report
+```
+
+A headers check fetches 2 URLs: the page you give, and the `http://` version of the same URL to check HTTPS enforcement, following at most 5 redirects each. Every request is a GET with the User-Agent `OpenComply/<version>` and sends no cookies and no request body.
+
+### Output formats and options
+
+OpenComply supports several output formats, for developers and AI agents.
+
+| Option | Description |
+|---|---|
+| *(none)* | Short summary that is easy to read, concise and uses few tokens |
+| `--format json` | Export the results as JSON data for further processing |
+| `--format markdown` | Markdown report with details and evidence |
+| `--all` | Show every check, including those that passed |
+| `--fail-on review` | Make items that still need review (`REVIEW`) fail the command too |
+| `--allow-private` | Allow internal systems you are authorized to scan, such as staging (private IPs and cloud metadata are refused by default) |
+
+**Examples**
+
+Check security headers and show a summary:
+
+```bash
+opencomply scan headers https://example.com
+```
+
+Export the results as JSON:
+
+```bash
+opencomply scan headers https://example.com --format json
+```
+
 ## Integrations
 
 | Method | Use |
@@ -230,77 +287,6 @@ Extensions to OpenComply are **data, not code**. No plugin that executes code is
 | Operators | An allowlist plus named built-in checks; no expressions or scripts |
 | Rule pack used by `scan` | The official pack embedded in the binary, signature-checked before every use |
 | New checks | Contributed to the main source code, see [CONTRIBUTING](CONTRIBUTING.md) |
-
-## Install
-
-Download a file from [Releases](https://github.com/vampirebeam/OpenComply/releases) and check it against the attached `.sha256`.
-
-```bash
-# Linux x86_64 / macOS Apple Silicon
-sha256sum -c opencomply-v0.1.0-<target>.tar.gz.sha256      # macOS: shasum -a 256 -c …
-tar -xzf opencomply-v0.1.0-<target>.tar.gz
-./opencomply-v0.1.0-<target>/opencomply --version
-```
-
-```powershell
-# Windows x86_64
-Get-FileHash opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256   # compare with the .sha256 file
-Expand-Archive opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -DestinationPath .
-.\opencomply-v0.1.0-x86_64-pc-windows-msvc\opencomply.exe --version
-```
-
-The v0.1.0 binaries are not signed by Apple or Microsoft, so the operating system may show a warning on first run.
-
-## Usage
-
-```bash
-opencomply scan headers https://example.com      # HTTP security headers
-opencomply standards                             # supported standards, scanner and report schema versions
-opencomply schema report                         # JSON Schema of the report
-```
-
-A headers check fetches 2 URLs: the page you give, and the `http://` version of the same URL to check HTTPS enforcement, following at most 5 redirects each. Every request is a GET with the User-Agent `OpenComply/<version>` and sends no cookies and no request body.
-
-### Output formats and options
-
-OpenComply supports several output formats, for developers, automation tools and AI agents.
-
-| Option | Description |
-|---|---|
-| *(none)* | Short summary that is easy to read, concise and uses few tokens |
-| `--format json` | Export the results as JSON data for further processing |
-| `--format markdown` | Markdown report with details and evidence |
-| `--all` | Show every check, including those that passed |
-| `--fail-on review` | Make items that still need review (`REVIEW`) fail the command too |
-| `--allow-private` | Allow internal systems you are authorized to scan, such as staging (private IPs and cloud metadata are refused by default) |
-
-**Examples**
-
-Check security headers and show a summary:
-
-```bash
-opencomply scan headers https://example.com
-```
-
-Export the results as JSON:
-
-```bash
-opencomply scan headers https://example.com --format json
-```
-
-### CI/CD (advanced)
-
-OpenComply can run in automation such as GitHub Actions, GitLab CI/CD or Jenkins to check security during development and deployment.
-
-To make items that still need review (`REVIEW`) fail the pipeline, use:
-
-```bash
-opencomply scan headers https://example.com --format json --fail-on review
-```
-
-This option changes the command's exit code, so the pipeline can act on the result.
-
-> **Note:** CI/CD is not required. You can run OpenComply directly from a terminal or through an AI agent.
 
 ## Privacy and security
 

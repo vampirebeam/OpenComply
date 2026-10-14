@@ -19,6 +19,63 @@ OpenComply เป็น **CLI engine ตัวเดียว** ที่ตร�
 |---|---|---|
 | **HTTP Security Headers** | HSTS, CSP, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, clickjacking, HTTPS enforcement, cookie และการเปิดเผยข้อมูลระบบ | เกรด A+ – F พร้อมคะแนน 0–100 |
 
+## การติดตั้ง
+
+ดาวน์โหลดไฟล์จาก [Releases](https://github.com/vampirebeam/OpenComply/releases) และตรวจกับไฟล์ `.sha256` ที่แนบมา
+
+```bash
+# Linux x86_64 / macOS Apple Silicon
+sha256sum -c opencomply-v0.1.0-<target>.tar.gz.sha256      # macOS: shasum -a 256 -c …
+tar -xzf opencomply-v0.1.0-<target>.tar.gz
+./opencomply-v0.1.0-<target>/opencomply --version
+```
+
+```powershell
+# Windows x86_64
+Get-FileHash opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256   # เทียบกับไฟล์ .sha256
+Expand-Archive opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -DestinationPath .
+.\opencomply-v0.1.0-x86_64-pc-windows-msvc\opencomply.exe --version
+```
+
+Binary ไม่มีการลงนามของ Apple / Microsoft ใน v0.1.0 ระบบปฏิบัติการอาจแสดงคำเตือนเมื่อเปิดครั้งแรก
+
+## การใช้งาน
+
+```bash
+opencomply scan headers https://example.com      # ตรวจสอบ HTTP security headers
+opencomply standards                             # มาตรฐานที่รองรับ เวอร์ชันของ scanner และ report schema
+opencomply schema report                         # JSON Schema ของ report
+```
+
+การตรวจ HTTP Security Headers ขอข้อมูลจาก 2 URL คือหน้าเว็บที่ระบุ และ `http://` ของ URL เดียวกันเพื่อตรวจ HTTPS enforcement โดยตาม redirect ได้ไม่เกิน 5 ครั้งต่อ URL ทุกคำขอใช้ GET ระบุ User-Agent `OpenComply/<version>` และไม่ส่ง cookie หรือ request body
+
+### รูปแบบการแสดงผลและตัวเลือก
+
+OpenComply รองรับการแสดงผลหลายรูปแบบ เพื่อให้เหมาะกับการใช้งานทั้งโดยนักพัฒนาและ AI agent
+
+| Option | คำอธิบาย |
+|---|---|
+| *(ไม่ระบุ)* | แสดงผลสรุปแบบอ่านง่าย กระชับ และประหยัด Token |
+| `--format json` | ส่งออกผลการตรวจสอบเป็นข้อมูล JSON สำหรับนำไปประมวลผลต่อ |
+| `--format markdown` | สร้างรายงาน Markdown พร้อมรายละเอียดและหลักฐานการตรวจสอบ |
+| `--all` | แสดงผลการตรวจสอบทั้งหมด รวมถึงรายการที่ผ่านเกณฑ์ |
+| `--fail-on review` | กำหนดให้รายการที่ต้องตรวจสอบเพิ่มเติม (`REVIEW`) ส่งผลให้คำสั่งไม่สำเร็จด้วย |
+| `--allow-private` | อนุญาตให้ตรวจระบบภายในที่ได้รับอนุญาต เช่น staging (ค่าเริ่มต้นปฏิเสธ IP ภายในและ cloud metadata) |
+
+**ตัวอย่างการใช้งาน**
+
+ตรวจสอบ Security Headers และแสดงผลสรุป:
+
+```bash
+opencomply scan headers https://example.com
+```
+
+ส่งออกผลการตรวจสอบเป็น JSON:
+
+```bash
+opencomply scan headers https://example.com --format json
+```
+
 ## การเชื่อมต่อ (Integrations)
 
 | วิธี | การใช้งาน |
@@ -221,7 +278,7 @@ next: fix 3 · evidence: --format markdown
 
 ## การขยายความสามารถ
 
-ส่วนขยายของ OpenComply เป็น**ข้อมูล ไม่ใช่โค้ด** ไม่มีการโหลด plugin ที่รันโค้ดเข้ามาใน scanner ทั้งนี้เพื่อให้ผลทำซ้ำได้และลดช่องทางโจมตีที่เกี่ยวกับ plugin (reduces plugin-related attack surface)
+ส่วนขยายของ OpenComply เป็น**ข้อมูล ไม่ใช่โค้ด** ไม่มีการโหลด plugin ที่รันโค้ดเข้ามาใน scanner ทั้งนี้เพื่อให้ผลทำซ้ำได้และลดช่องทางโจมตีที่เกี่ยวกับ plugin
 
 | ความสามารถ | รายละเอียด |
 |---|---|
@@ -230,77 +287,6 @@ next: fix 3 · evidence: --format markdown
 | Operator | allowlist และ built-in checks ตามชื่อที่กำหนด ไม่มี expression หรือ script |
 | Rule pack ที่ `scan` ใช้ | rule pack ทางการที่ฝังใน binary และตรวจลายเซ็นก่อนใช้ทุกครั้ง |
 | เพิ่มความสามารถการตรวจ | ผ่านการร่วมพัฒนาในซอร์สโค้ดหลัก ดู [CONTRIBUTING](CONTRIBUTING.md) |
-
-## การติดตั้ง
-
-ดาวน์โหลดไฟล์จาก [Releases](https://github.com/vampirebeam/OpenComply/releases) และตรวจกับไฟล์ `.sha256` ที่แนบมา
-
-```bash
-# Linux x86_64 / macOS Apple Silicon
-sha256sum -c opencomply-v0.1.0-<target>.tar.gz.sha256      # macOS: shasum -a 256 -c …
-tar -xzf opencomply-v0.1.0-<target>.tar.gz
-./opencomply-v0.1.0-<target>/opencomply --version
-```
-
-```powershell
-# Windows x86_64
-Get-FileHash opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256   # เทียบกับไฟล์ .sha256
-Expand-Archive opencomply-v0.1.0-x86_64-pc-windows-msvc.zip -DestinationPath .
-.\opencomply-v0.1.0-x86_64-pc-windows-msvc\opencomply.exe --version
-```
-
-Binary ไม่มีการลงนามของ Apple / Microsoft ใน v0.1.0 ระบบปฏิบัติการอาจแสดงคำเตือนเมื่อเปิดครั้งแรก
-
-## การใช้งาน
-
-```bash
-opencomply scan headers https://example.com      # ตรวจสอบ HTTP security headers
-opencomply standards                             # มาตรฐานที่รองรับ เวอร์ชันของ scanner และ report schema
-opencomply schema report                         # JSON Schema ของ report
-```
-
-การตรวจ HTTP Security Headers ขอข้อมูลจาก 2 URL คือหน้าเว็บที่ระบุ และ `http://` ของ URL เดียวกันเพื่อตรวจ HTTPS enforcement โดยตาม redirect ได้ไม่เกิน 5 ครั้งต่อ URL ทุกคำขอใช้ GET ระบุ User-Agent `OpenComply/<version>` และไม่ส่ง cookie หรือ request body
-
-### รูปแบบการแสดงผลและตัวเลือก
-
-OpenComply รองรับการแสดงผลหลายรูปแบบ เพื่อให้เหมาะกับการใช้งานทั้งโดยนักพัฒนา เครื่องมืออัตโนมัติ และ AI Agent
-
-| Option | คำอธิบาย |
-|---|---|
-| *(ไม่ระบุ)* | แสดงผลสรุปแบบอ่านง่าย กระชับ และประหยัด Token |
-| `--format json` | ส่งออกผลการตรวจสอบเป็นข้อมูล JSON สำหรับนำไปประมวลผลต่อ |
-| `--format markdown` | สร้างรายงาน Markdown พร้อมรายละเอียดและหลักฐานการตรวจสอบ |
-| `--all` | แสดงผลการตรวจสอบทั้งหมด รวมถึงรายการที่ผ่านเกณฑ์ |
-| `--fail-on review` | กำหนดให้รายการที่ต้องตรวจสอบเพิ่มเติม (`REVIEW`) ส่งผลให้คำสั่งไม่สำเร็จด้วย |
-| `--allow-private` | อนุญาตให้ตรวจระบบภายในที่ได้รับอนุญาต เช่น staging (ค่าเริ่มต้นปฏิเสธ IP ภายในและ cloud metadata) |
-
-**ตัวอย่างการใช้งาน**
-
-ตรวจสอบ Security Headers และแสดงผลสรุป:
-
-```bash
-opencomply scan headers https://example.com
-```
-
-ส่งออกผลการตรวจสอบเป็น JSON:
-
-```bash
-opencomply scan headers https://example.com --format json
-```
-
-### การใช้งานร่วมกับ CI/CD (สำหรับผู้ใช้งานขั้นสูง)
-
-OpenComply สามารถนำไปใช้งานร่วมกับระบบอัตโนมัติ เช่น GitHub Actions, GitLab CI/CD หรือ Jenkins เพื่อช่วยตรวจสอบความปลอดภัยระหว่างกระบวนการพัฒนาและ Deploy
-
-หากต้องการให้ระบบถือว่ารายการที่ยังต้องตรวจสอบเพิ่มเติม (`REVIEW`) ไม่ผ่านเงื่อนไข ให้ใช้:
-
-```bash
-opencomply scan headers https://example.com --format json --fail-on review
-```
-
-ตัวเลือกนี้มีผลต่อ Exit Code ของคำสั่ง ทำให้ระบบอัตโนมัติสามารถนำผลการตรวจสอบไปใช้กำหนดเงื่อนไขของ Pipeline ได้
-
-> **หมายเหตุ:** การใช้งาน OpenComply ไม่จำเป็นต้องมี CI/CD สามารถเรียกใช้งานผ่าน Terminal หรือ AI Agent ได้โดยตรงตามปกติ
 
 ## ความเป็นส่วนตัวและความปลอดภัย
 
