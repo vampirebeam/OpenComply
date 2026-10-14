@@ -53,9 +53,22 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
       - name: Create draft
         run: |
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$TAG" --notes "Draft: review before publishing."
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # The installers at releases/latest/download/install.{sh,ps1}: one source, the plugin's own scripts.
+      - name: Attach installers
+        run: |
+          dir=plugins/opencomply/skills/security-headers/scripts
+          if [ -f "$dir/install.sh" ]; then
+            gh release upload "$TAG" "$dir/install.sh" "$dir/install.ps1" --repo "$GITHUB_REPOSITORY"
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
 

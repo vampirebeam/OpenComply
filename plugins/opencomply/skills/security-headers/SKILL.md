@@ -12,17 +12,16 @@ It checks HTTP security headers only. Do not use it for other questions, and do 
 
 ## 1. Find or install the CLI
 
-1. Run `opencomply --version`. If it prints `opencomply 0.2.0` or later, use `opencomply`.
-2. Otherwise check the install location from a previous run:
-   - Linux / macOS: `${XDG_DATA_HOME:-$HOME/.local/share}/opencomply/v0.2.0/opencomply`
-   - Windows: `%LOCALAPPDATA%\opencomply\v0.2.0\opencomply.exe`
-3. If it is not installed, **ask the user first**, then run the installer bundled with this skill
-   (it downloads the matching release from github.com/vampirebeam/OpenComply, checks its SHA-256, needs no admin rights
-   and does not change PATH). The last line it prints is the binary path — use that path.
+1. Run `opencomply --version`. If it prints `opencomply 0.2.1` or later, use `opencomply`.
+2. If it is missing or older, **ask the user first**, then run the installer bundled with this skill. It downloads the
+   matching release from github.com/vampirebeam/OpenComply, checks its SHA-256, needs no admin rights, and makes
+   `opencomply` available in new terminals (Windows: adds `%LOCALAPPDATA%\opencomply\bin` to the user PATH;
+   Linux / macOS: links `~/.local/bin/opencomply`). Tell the user it does this. In the current session use the path it
+   prints on its last line.
    - Linux x86_64 / macOS Apple Silicon: `sh <skill-dir>/scripts/install.sh`
    - Windows x86_64: `powershell -NoProfile -ExecutionPolicy Bypass -File <skill-dir>/scripts/install.ps1`
    - `<skill-dir>` is this skill's directory (in Claude Code: `${CLAUDE_SKILL_DIR}`). Other platforms have no release
-     build: tell the user.
+     build: tell the user. To remove it later: the same installer with `--uninstall` (`-Uninstall` on Windows).
 
 ## 2. Before scanning
 

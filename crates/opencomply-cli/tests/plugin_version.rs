@@ -32,13 +32,4 @@ fn plugin_and_installers_match_the_binary_version() {
         skill.contains(&format!("opencomply {VERSION}")),
         "SKILL.md version check"
     );
-    assert_eq!(
-        skill.matches(&format!("/v{VERSION}/")).count(),
-        1,
-        "SKILL.md Linux/macOS install path"
-    );
-    assert!(
-        skill.contains(&format!("\\v{VERSION}\\")),
-        "SKILL.md Windows install path"
-    );
 }
