@@ -7,7 +7,7 @@ use crate::builtin;
 use crate::finding::{Evidence, EvidenceClass, Finding, Module, Status};
 use crate::platform::DetectedPlatform;
 use crate::report::Report;
-use crate::rules::{Check, Rule, RulePack};
+use crate::rules::{Check, LayerHint, Rule, RulePack};
 
 pub(crate) const MAX_EVIDENCE_CHARS: usize = 300;
 
@@ -20,6 +20,8 @@ pub struct HttpEvidence {
     pub headers: Vec<(String, String)>,
     pub https: bool,
     pub insecure_probe: Option<InsecureProbe>,
+    /// Set-Cookie values from redirect responses served over HTTPS before the evaluated page.
+    pub redirect_cookies: Vec<String>,
 }
 
 /// One response in a redirect chain.
@@ -72,13 +74,15 @@ pub enum EvalInput<'a> {
     Files(&'a dyn FileProbe),
 }
 
-/// `example` overrides the rule's static `example_fix` (built from the site's own values, e.g. its CSP).
+/// `example` overrides the rule's static `example_fix` (built from the site's own values, e.g. its CSP);
+/// `layers` says which platform layers can fix what the evidence shows (overrides the rule's static `prefer`).
 pub(crate) struct Outcome {
     pub status: Status,
     pub detail: String,
     pub reason: Option<String>,
     pub missing: bool,
     pub example: Option<String>,
+    pub layers: Option<LayerHint>,
 }
 
 impl Outcome {
@@ -89,7 +93,13 @@ impl Outcome {
             reason,
             missing: false,
             example: None,
+            layers: None,
         }
+    }
+    #[must_use]
+    pub fn with_layers(mut self, layers: LayerHint) -> Self {
+        self.layers = Some(layers);
+        self
     }
     pub fn pass(detail: String) -> Self {
         Self::new(Status::Pass, detail, None)
@@ -315,7 +325,7 @@ pub fn evaluate_rule(
             None
         },
         platform_fixes: if actionable {
-            rule.platform_fixes(platforms)
+            rule.platform_fixes(platforms, outcome.layers.as_ref())
         } else {
             Vec::new()
         },

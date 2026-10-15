@@ -12,7 +12,7 @@ It checks HTTP security headers only. Do not use it for other questions, and do 
 
 ## 1. Find or install the CLI
 
-1. Run `opencomply --version`. If it prints `opencomply 0.2.2` or later, use `opencomply`.
+1. Run `opencomply --version`. If it prints `opencomply 0.2.3` or later, use `opencomply`.
 2. If the command is not found, it may be installed but not yet on this session's PATH (the app was open during the
    install). Try the standard location before anything else and use it if it prints a version:
    - Windows: `%LOCALAPPDATA%\opencomply\bin\opencomply.exe`

@@ -100,11 +100,21 @@ pub struct Provenance {
 pub struct RuleRegistry {
     packs: Vec<RulePack>,
     provenance: Vec<Provenance>,
+    /// Tests stand in their own official keys; `None` = the built-in `OFFICIAL_KEYS`.
+    official_keys: Option<Vec<TrustedKey>>,
 }
 
 impl RuleRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_official_keys(keys: Vec<TrustedKey>) -> Self {
+        Self {
+            official_keys: Some(keys),
+            ..Self::default()
+        }
     }
 
     /// Loads a pack file: checksum, signature check, official-prefix policy, then validation and `add`.
@@ -127,6 +137,21 @@ impl RuleRegistry {
         let pack = parse(source, text)?;
         let official = pack.pack.id.starts_with(OFFICIAL_PREFIX);
         let signed_by = match trust {
+            PackTrust::Verified { key_id } if official => {
+                // Fail closed: the signing key must be an official key by its public key, not only by its id.
+                let official_keys = self
+                    .official_keys
+                    .clone()
+                    .unwrap_or_else(TrustedKey::official);
+                let signer = trusted.iter().find(|k| k.id == key_id);
+                if !signer.is_some_and(|s| official_keys.iter().any(|o| o.same_as(s))) {
+                    return Err(untrusted(format!(
+                        "pack id \"{}\" is reserved for official packs; key \"{key_id}\" is not an official key",
+                        pack.pack.id
+                    )));
+                }
+                Some(key_id)
+            }
             PackTrust::Verified { key_id } => Some(key_id),
             PackTrust::Unsigned if official => {
                 return Err(untrusted(format!(
@@ -395,7 +420,7 @@ mod tests {
         let keys = [trusted("official-2026", 7)];
         let text = pack("opencomply-headers", "1.0.0", "headers", &["001"]);
         let sig = sign("official-2026", 7, text.as_bytes());
-        let mut reg = RuleRegistry::new();
+        let mut reg = RuleRegistry::with_official_keys(keys.to_vec());
         let prov = reg
             .add_file("official.toml", text.as_bytes(), Some(&sig), &keys, false)
             .unwrap();
@@ -420,7 +445,7 @@ mod tests {
         let keys = [trusted("official-2026", 7)];
         let official = pack("opencomply-headers", "1.0.0", "headers", &["001"]);
         let custom = pack("acme-headers", "1.0.0", "headers", &["002"]);
-        let mut reg = RuleRegistry::new();
+        let mut reg = RuleRegistry::with_official_keys(keys.to_vec());
         let err = reg
             .add_file("o.toml", official.as_bytes(), None, &keys, true)
             .unwrap_err();
@@ -446,6 +471,35 @@ mod tests {
         assert!(reg
             .add_file("bin", &[0xff, 0xfe], None, &keys, true)
             .is_err());
+    }
+
+    #[test]
+    fn official_pack_ids_need_the_official_public_key_not_just_its_name() {
+        use crate::signing::test_keys::{sign, trusted};
+        let official = pack("opencomply-headers", "1.0.0", "headers", &["001"]);
+        let mut reg = RuleRegistry::with_official_keys(vec![trusted("official-2026", 7)]);
+        // An organisation key that is trusted, even one named like the official key, cannot sign an official id.
+        for impostor in [trusted("official-2026", 9), trusted("acme-2026", 9)] {
+            let sig = sign(&impostor.id, 9, official.as_bytes());
+            let err = reg
+                .add_file("o.toml", official.as_bytes(), Some(&sig), &[impostor], true)
+                .unwrap_err();
+            assert!(err.to_string().contains("not an official key"), "{err}");
+        }
+        assert!(reg.packs().is_empty());
+        // The same organisation key still signs its own packs.
+        let custom = pack("acme-headers", "1.0.0", "headers", &["002"]);
+        let sig = sign("acme-2026", 9, custom.as_bytes());
+        let prov = reg
+            .add_file(
+                "c.toml",
+                custom.as_bytes(),
+                Some(&sig),
+                &[trusted("acme-2026", 9)],
+                false,
+            )
+            .unwrap();
+        assert_eq!(prov.signed_by.as_deref(), Some("acme-2026"));
     }
 
     #[test]

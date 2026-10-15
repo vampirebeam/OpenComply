@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::finding::{Module, PlatformFix, Severity};
-use crate::platform::{platform_def, DetectedPlatform};
+use crate::platform::{platform_def, DetectedPlatform, Layer};
 use crate::render::{MAX_EXAMPLE_CHARS, MAX_HINT_CHARS, MAX_NOTE_CHARS};
 
 /// The official headers rule pack, embedded in the binary.
@@ -83,18 +83,37 @@ pub struct PlatformGuide {
 /// At most this many platform fixes per finding (outermost layer first) to keep output short.
 pub const MAX_PLATFORM_FIXES: usize = 2;
 
+/// Which platform layers can fix what the evidence shows (e.g. a `Server` version is fixed in the web server, not the
+/// app). `prefer` overrides the rule's static `prefer`; layers in `skip` are not offered as places to fix;
+/// a non-empty `only` keeps just those platform ids (e.g. the load balancer that set a cookie).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LayerHint {
+    pub prefer: Vec<Layer>,
+    pub skip: Vec<Layer>,
+    pub only: Vec<&'static str>,
+}
+
 impl Rule {
     /// Guidance for the platforms detected on the target: preferred layer first, then CDN → framework order,
-    /// capped at `MAX_PLATFORM_FIXES`.
-    pub fn platform_fixes(&self, detected: &[DetectedPlatform]) -> Vec<PlatformFix> {
+    /// capped at `MAX_PLATFORM_FIXES`. A `LayerHint` from the evidence decides relevance and preference.
+    pub fn platform_fixes(
+        &self,
+        detected: &[DetectedPlatform],
+        hint: Option<&LayerHint>,
+    ) -> Vec<PlatformFix> {
         let mut fixes: Vec<PlatformFix> = detected
             .iter()
+            .filter(|d| {
+                hint.is_none_or(|h| {
+                    !h.skip.contains(&d.layer) && (h.only.is_empty() || h.only.contains(&d.id))
+                })
+            })
             .filter_map(|d| {
                 self.platforms.get(d.id).map(|g| PlatformFix {
                     platform: d.id.to_string(),
                     how: g.how.clone(),
                     note: g.note.clone(),
-                    preferred: g.prefer,
+                    preferred: hint.map_or(g.prefer, |h| h.prefer.contains(&d.layer)),
                 })
             })
             .collect();

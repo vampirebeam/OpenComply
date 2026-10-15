@@ -372,18 +372,25 @@ fn md_overview(out: &mut String, report: &Report) {
     }
 }
 
+/// One cell per finding: `**platform, preferred:** how — ⚠ note`, places separated by ` · ` (how texts may end in `;`).
 fn platform_cell(f: &Finding) -> String {
+    let several = f.platform_fixes.len() > 1;
     f.platform_fixes
         .iter()
         .map(|pf| {
-            let mut s = format!("**{}:** {}", md_cell(&pf.platform), md_cell(&pf.how));
+            let tag = if pf.preferred && several {
+                ", preferred"
+            } else {
+                ""
+            };
+            let mut s = format!("**{}{tag}:** {}", md_cell(&pf.platform), md_cell(&pf.how));
             if let Some(n) = &pf.note {
                 let _ = write!(s, " — ⚠ {}", md_cell(n));
             }
             s
         })
         .collect::<Vec<_>>()
-        .join("; ")
+        .join(" · ")
 }
 
 fn md_fails(out: &mut String, fails: &[&Finding]) {

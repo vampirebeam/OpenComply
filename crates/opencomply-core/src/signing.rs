@@ -63,6 +63,11 @@ impl TrustedKey {
         })
     }
 
+    /// Same id and same public key — an id alone proves nothing.
+    pub fn same_as(&self, other: &TrustedKey) -> bool {
+        self.id == other.id && self.key == other.key
+    }
+
     /// The built-in official keys (empty until the first signed release).
     pub fn official() -> Vec<TrustedKey> {
         OFFICIAL_KEYS

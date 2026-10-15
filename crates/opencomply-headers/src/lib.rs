@@ -8,8 +8,8 @@ use opencomply_core::limits::Deadline;
 use opencomply_core::rules::{RulePack, OFFICIAL_HEADERS_PACK, OFFICIAL_HEADERS_SIG};
 use opencomply_core::signing::TrustedKey;
 use opencomply_core::{
-    detect_from_html, detect_platforms, merge_platforms, Error, EvalInput, HttpEvidence,
-    InsecureProbe, Limits, Module, Report, RuleRegistry,
+    detect_from_html, detect_platforms, merge_platforms, without_host_infra, Error, EvalInput,
+    HttpEvidence, InsecureProbe, Limits, Module, Report, RuleRegistry,
 };
 use opencomply_http::{validate_target, FetchOptions, FetchResult, NetPolicy, SafeClient};
 use url::Url;
@@ -155,12 +155,14 @@ pub async fn scan_headers(
     if let Some(body) = &main.body {
         platforms = merge_platforms(platforms, detect_from_html(body, &source));
     }
+    let platforms = without_host_infra(platforms);
     let evidence = HttpEvidence {
         source,
         status: main.status,
         https: main.final_url.starts_with("https://"),
         headers: main.headers,
         insecure_probe: probe,
+        redirect_cookies: main.redirect_cookies,
     };
     let report = registry.evaluate(
         Module::Headers,

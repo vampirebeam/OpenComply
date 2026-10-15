@@ -350,6 +350,52 @@ mod tests {
         assert_eq!((f.grade, f.score), (Grade::F, Some(0)));
     }
 
+    /// Every PASS / FAIL combination of the official rules: a failing mandatory rule never grades above C, and each
+    /// upgrade path's `result` is exactly the grade those steps give (caps included) and reaches its target.
+    #[test]
+    fn caps_hold_for_every_pass_fail_combination() {
+        let p = pack();
+        let rules: Vec<&Rule> = p.rules.iter().collect();
+        let ids: Vec<String> = p.rules.iter().map(|r| r.id.clone()).collect();
+        for mask in 0u32..(1 << ids.len()) {
+            let failing = |id: &str| {
+                ids.iter()
+                    .position(|i| i == id)
+                    .is_some_and(|n| mask & (1 << n) != 0)
+            };
+            let g = grade(&|id| {
+                if failing(id) {
+                    Status::Fail
+                } else {
+                    Status::Pass
+                }
+            });
+            if p.rules.iter().any(|r| r.mandatory && failing(&r.id)) {
+                assert!(g.grade >= Grade::C, "mask {mask:#b}: {:?}", g.grade);
+            }
+            for up in &g.upgrades {
+                let fixed: Vec<&str> = up.steps.iter().map(|s| s.rule_id.as_str()).collect();
+                let after = grade_headers(
+                    &findings(&p, &|id| {
+                        if failing(id) && !fixed.contains(&id) {
+                            Status::Fail
+                        } else {
+                            Status::Pass
+                        }
+                    }),
+                    &rules,
+                );
+                assert_eq!(after.grade, up.result, "mask {mask:#b} → {:?}", up.to);
+                assert!(
+                    up.result <= up.to,
+                    "mask {mask:#b}: {:?} misses {:?}",
+                    up.result,
+                    up.to
+                );
+            }
+        }
+    }
+
     #[test]
     fn mandatory_failure_caps_a_high_score() {
         // HTTPS enforcement fails, everything else passes: score 85 but capped at C.

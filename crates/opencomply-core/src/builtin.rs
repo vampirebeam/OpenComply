@@ -6,8 +6,9 @@
 use std::collections::BTreeMap;
 
 use crate::evaluate::{directive_value, shown, HttpEvidence, InsecureProbe, Outcome};
+use crate::platform::Layer;
 use crate::render::MAX_EXAMPLE_CHARS;
-use crate::rules::Builtin;
+use crate::rules::{Builtin, LayerHint};
 
 /// 180 days: shorter policies expire between visits of occasional users.
 pub const HSTS_MIN_MAX_AGE: u64 = 15_552_000;
@@ -114,15 +115,16 @@ fn is_wildcard_source(t: &str) -> bool {
     )
 }
 
+/// The directive a browser applies, following CSP fallback: `first` → `script-src` → `default-src`.
+fn effective<'a>(policy: &'a Policy, first: &'static str) -> Option<(&'static str, &'a [String])> {
+    [first, "script-src", "default-src"]
+        .into_iter()
+        .find_map(|d| policy.get(d).map(|s| (d, s.as_slice())))
+}
+
+/// Sources for `<script>` elements (`script-src-elem` → `script-src` → `default-src`).
 fn script_sources(policy: &Policy) -> Option<(&'static str, &[String])> {
-    policy
-        .get("script-src")
-        .map(|s| ("script-src", s.as_slice()))
-        .or_else(|| {
-            policy
-                .get("default-src")
-                .map(|s| ("default-src", s.as_slice()))
-        })
+    effective(policy, "script-src-elem")
 }
 
 fn script_control(policy: &Policy) -> ScriptControl {
@@ -136,7 +138,7 @@ fn script_control(policy: &Policy) -> ScriptControl {
     let strict_dynamic = nonce_or_hash && has("'strict-dynamic'");
     if has("'unsafe-inline'") && !nonce_or_hash {
         return ScriptControl::Weak(format!(
-            "{dir} allows 'unsafe-inline', so an injected <script> still runs"
+            "{dir} allows 'unsafe-inline' without a nonce or hash, so injected inline scripts can run"
         ));
     }
     if !strict_dynamic {
@@ -146,18 +148,53 @@ fn script_control(policy: &Policy) -> ScriptControl {
             ));
         }
     }
-    if has("'unsafe-eval'") {
-        return ScriptControl::Review(format!("{dir} allows 'unsafe-eval'"));
+    // Event handler attributes (onclick=…) cannot carry a nonce: only 'unsafe-inline' in the attribute
+    // directive allows them, and a nonce or hash in that same directive makes browsers ignore it.
+    if let Some((attr_dir, attr)) = effective(policy, "script-src-attr") {
+        let inline = attr
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case("'unsafe-inline'"));
+        if inline && !attr.iter().any(|s| is_nonce_or_hash(s)) {
+            return ScriptControl::Weak(format!(
+                "{attr_dir} allows 'unsafe-inline', so injected event handlers (onclick=…) can run"
+            ));
+        }
+    }
+    // eval() follows script-src → default-src; script-src-elem does not govern it.
+    let eval_dir = ["script-src", "default-src"]
+        .into_iter()
+        .find_map(|d| policy.get(d).map(|s| (d, s)));
+    if let Some((eval_dir, eval_sources)) = eval_dir {
+        if eval_sources
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case("'unsafe-eval'"))
+        {
+            return ScriptControl::Review(format!("{eval_dir} allows 'unsafe-eval'"));
+        }
     }
     ScriptControl::Strong
 }
-
 /// The fix for a weak policy, built from the site's own sources so its existing hosts keep working:
 /// drop 'unsafe-inline' and wildcards, add a nonce placeholder, change only the script directive.
 fn csp_example(policy: &Policy) -> String {
     let Some((dir, sources)) = script_sources(policy) else {
         return format!("add to your CSP: script-src 'self' {NONCE_PLACEHOLDER}; object-src 'none'; base-uri 'self'");
     };
+    let elements_weak = {
+        let has = |t: &str| sources.iter().any(|s| s.eq_ignore_ascii_case(t));
+        let nonce_or_hash = sources.iter().any(|s| is_nonce_or_hash(s));
+        (has("'unsafe-inline'") && !nonce_or_hash)
+            || (!(nonce_or_hash && has("'strict-dynamic'"))
+                && sources.iter().any(|s| is_wildcard_source(s)))
+    };
+    if !elements_weak {
+        // Only event handler attributes are open.
+        return if policy.contains_key("script-src-attr") {
+            "change only script-src-attr: script-src-attr 'none'".to_string()
+        } else {
+            "add (keep the rest): script-src-attr 'none'".to_string()
+        };
+    }
     let mut kept: Vec<&str> = sources
         .iter()
         .map(String::as_str)
@@ -173,8 +210,8 @@ fn csp_example(policy: &Policy) -> String {
     if !sources.iter().any(|s| is_nonce_or_hash(s)) {
         kept.insert(self_at + 1, NONCE_PLACEHOLDER);
     }
-    let lead = if dir == "script-src" {
-        "change only script-src: script-src".to_string()
+    let lead = if dir == "script-src" || dir == "script-src-elem" {
+        format!("change only {dir}: {dir}")
     } else {
         "add script-src (keep default-src): script-src".to_string()
     };
@@ -460,7 +497,12 @@ struct Cookie {
     secure: bool,
     http_only: bool,
     same_site: Option<String>,
+    /// Set by a redirect response before the final page, not by the page itself.
+    on_redirect: bool,
 }
+
+/// CSRF cookies that frameworks make readable on purpose (the page script copies them into a request header).
+const SCRIPT_READABLE_COOKIES: [&str; 2] = ["xsrf-token", "csrftoken"];
 
 fn parse_cookie(v: &str) -> Cookie {
     let mut parts = v.split(';');
@@ -481,6 +523,7 @@ fn parse_cookie(v: &str) -> Cookie {
         secure: false,
         http_only: false,
         same_site: None,
+        on_redirect: false,
     };
     for attr in parts {
         let (k, val) = attr.split_once('=').unwrap_or((attr, ""));
@@ -494,16 +537,79 @@ fn parse_cookie(v: &str) -> Cookie {
     c
 }
 
-fn cookies(http: &HttpEvidence) -> Outcome {
-    let raw = http.values("set-cookie");
-    if raw.is_empty() {
-        return Outcome::not_applicable(
-            "(no Set-Cookie on this response)".into(),
-            "this page sets no cookies; scan a page that does (e.g. login) to check them".into(),
-        );
+/// Cookies set by load balancers, CDNs and WAFs (stickiness, bot management) rather than by the application,
+/// with the platform that sets them.
+const INFRA_COOKIES: &[(&str, &str)] = &[
+    ("awsalb", "aws-elb"),
+    ("awselb", "aws-elb"),
+    ("bigipserver", "f5"),
+    ("ts01", "f5"),
+    ("nsc_", "netscaler"),
+    ("citrix_ns_id", "netscaler"),
+    ("fortiwafsid", "fortiweb"),
+    ("cookiesession1", "fortiweb"),
+    ("__cf_bm", "cloudflare"),
+    ("cf_clearance", "cloudflare"),
+    ("__cflb", "cloudflare"),
+    ("_cfuvid", "cloudflare"),
+    ("incap_ses_", "imperva"),
+    ("visid_incap_", "imperva"),
+    ("nlbi_", "imperva"),
+    ("ak_bmsc", "akamai"),
+    ("bm_s", "akamai"),
+    ("bm_mi", "akamai"),
+    ("akaalb_", "akamai"),
+    ("akaas_", "akamai"),
+    ("_abck", "akamai"),
+];
+
+fn infra_platform(name: &str) -> Option<&'static str> {
+    let name = name.to_ascii_lowercase();
+    INFRA_COOKIES
+        .iter()
+        .find(|(prefix, _)| name.starts_with(prefix))
+        .map(|(_, platform)| *platform)
+}
+/// Distinct names of the cookies matching `pred`, in order.
+fn flagged_names<'a>(cookies: &'a [Cookie], pred: &dyn Fn(&Cookie) -> bool) -> Vec<&'a str> {
+    let mut names: Vec<&str> = Vec::new();
+    for c in cookies.iter().filter(|c| pred(c)) {
+        if !names.contains(&c.name.as_str()) {
+            names.push(&c.name);
+        }
     }
-    let cookies: Vec<Cookie> = raw.iter().map(|v| parse_cookie(v)).collect();
-    let detail = cookies
+    names
+}
+
+/// `a, b +3` — keeps one-line reasons short enough that the important part (e.g. who sets a cookie) is never cut.
+fn short_list(names: &[&str]) -> String {
+    let mut unique: Vec<&str> = Vec::new();
+    for n in names {
+        if !unique.contains(n) {
+            unique.push(n);
+        }
+    }
+    let shown: Vec<String> = unique
+        .iter()
+        .take(2)
+        .map(|n| {
+            if n.chars().count() > 18 {
+                format!("{}…", n.chars().take(17).collect::<String>())
+            } else {
+                (*n).to_string()
+            }
+        })
+        .collect();
+    let rest = unique.len().saturating_sub(2);
+    if rest > 0 {
+        format!("{} +{rest}", shown.join(", "))
+    } else {
+        shown.join(", ")
+    }
+}
+/// `name (flags)` per cookie — never the value.
+fn cookie_detail(cookies: &[Cookie]) -> String {
+    cookies
         .iter()
         .map(|c| {
             let mut attrs = Vec::new();
@@ -516,43 +622,124 @@ fn cookies(http: &HttpEvidence) -> Outcome {
             if let Some(s) = &c.same_site {
                 attrs.push(format!("SameSite={s}"));
             }
-            // `name (flags)`, not `name: flags` — a `TOKEN: …` shape would be taken for a secret by redaction.
             if attrs.is_empty() {
-                format!("{} (no flags)", c.name)
-            } else {
-                format!("{} ({})", c.name, attrs.join(", "))
+                attrs.push("no flags".to_string());
             }
+            if c.on_redirect {
+                attrs.push("on redirect".to_string());
+            }
+            // `name (flags)`, not `name: flags` — a `TOKEN: …` shape would be taken for a secret by redaction.
+            format!("{} ({})", c.name, attrs.join(", "))
         })
         .collect::<Vec<_>>()
-        .join("; ");
-    let names = |pred: &dyn Fn(&Cookie) -> bool| {
-        cookies
-            .iter()
-            .filter(|c| pred(c))
-            .map(|c| c.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
+        .join("; ")
+}
+
+/// Guidance goes where the flagged cookies come from: a load balancer / CDN cookie is configured in that service,
+/// never in the app. Returns the hint, who to name in the reason (`3 imperva cookies` or the cookie names) and,
+/// for infrastructure cookies, the suffix naming where to fix it.
+fn cookie_guidance(
+    cookies: &[Cookie],
+    pred: &dyn Fn(&Cookie) -> bool,
+) -> (LayerHint, String, String) {
+    let owners: Vec<Option<&'static str>> = cookies
+        .iter()
+        .filter(|c| pred(c))
+        .map(|c| infra_platform(&c.name))
+        .collect();
+    if !owners.is_empty() && owners.iter().all(Option::is_some) {
+        let mut only: Vec<&'static str> = owners.into_iter().flatten().collect();
+        only.sort_unstable();
+        only.dedup();
+        let count = flagged_names(cookies, pred).len();
+        let owner = only.join(" / ");
+        let who = format!(
+            "{count} {owner} cookie{}",
+            if count == 1 { "" } else { "s" }
+        );
+        let note = " (fix it there)".to_string();
+        (
+            LayerHint {
+                prefer: vec![Layer::Cdn],
+                skip: vec![
+                    Layer::Host,
+                    Layer::Server,
+                    Layer::Framework,
+                    Layer::Frontend,
+                ],
+                only,
+            },
+            who,
+            note,
+        )
+    } else {
+        (
+            LayerHint {
+                prefer: vec![Layer::Framework],
+                skip: vec![],
+                only: vec![],
+            },
+            short_list(&flagged_names(cookies, pred)),
+            String::new(),
+        )
+    }
+}
+
+fn cookies(http: &HttpEvidence) -> Outcome {
+    let mut cookies: Vec<Cookie> = http
+        .values("set-cookie")
+        .iter()
+        .map(|v| parse_cookie(v))
+        .collect();
+    // A cookie set again by the final page is judged by that last version, as the browser keeps it.
+    for v in &http.redirect_cookies {
+        let mut c = parse_cookie(v);
+        if !cookies.iter().any(|k| k.name == c.name) {
+            c.on_redirect = true;
+            cookies.push(c);
+        }
+    }
+    if cookies.is_empty() {
+        return Outcome::not_applicable(
+            "(no Set-Cookie on this response)".into(),
+            "this page sets no cookies; scan a page that does (e.g. login) to check them".into(),
+        );
+    }
+    let detail = cookie_detail(&cookies);
+    let none_insecure_pred = |c: &Cookie| c.same_site.as_deref() == Some("none") && !c.secure;
+    let n = flagged_names(&cookies, &none_insecure_pred).len();
+    if n > 0 {
+        let (hint, who, note) = cookie_guidance(&cookies, &none_insecure_pred);
+        let them = if n == 1 { "it" } else { "them" };
+        return Outcome::fail(
+            detail,
+            format!("SameSite=None without Secure on {who}, so browsers reject {them}{note}"),
+        )
+        .with_layers(hint);
+    }
+    let not_secure_pred = |c: &Cookie| !c.secure;
+    let n = flagged_names(&cookies, &not_secure_pred).len();
+    if http.https && n > 0 {
+        let (hint, who, note) = cookie_guidance(&cookies, &not_secure_pred);
+        let they_are = if n == 1 { "it is" } else { "they are" };
+        return Outcome::fail(
+            detail,
+            format!("Secure missing on {who}, so {they_are} also sent over http://{note}"),
+        )
+        .with_layers(hint);
+    }
+    let readable_pred = |c: &Cookie| {
+        !c.http_only && !SCRIPT_READABLE_COOKIES.contains(&c.name.to_ascii_lowercase().as_str())
     };
-    let none_insecure = names(&|c| c.same_site.as_deref() == Some("none") && !c.secure);
-    if !none_insecure.is_empty() {
-        return Outcome::fail(
-            detail,
-            format!("cookies with SameSite=None but no Secure ({none_insecure}) are rejected by browsers"),
-        );
-    }
-    let not_secure = names(&|c| !c.secure);
-    if http.https && !not_secure.is_empty() {
-        return Outcome::fail(
-            detail,
-            format!("cookies without Secure ({not_secure}) are also sent over http://"),
-        );
-    }
-    let readable = names(&|c| !c.http_only);
-    if !readable.is_empty() {
+    let n = flagged_names(&cookies, &readable_pred).len();
+    if n > 0 {
+        let (hint, who, note) = cookie_guidance(&cookies, &readable_pred);
+        let them = if n == 1 { "it" } else { "them" };
         return Outcome::review(
             detail,
-            format!("cookies without HttpOnly ({readable}) can be read by page scripts, including injected ones"),
-        );
+            format!("HttpOnly missing on {who}, so page scripts can read {them}{note}"),
+        )
+        .with_layers(hint);
     }
     Outcome::pass(detail)
 }
@@ -595,18 +782,45 @@ fn info_disclosure(http: &HttpEvidence) -> Outcome {
                 }
                 acc
             });
+    // A `Server` version is set by the web server (or its host panel) — the app and the CDN guides cannot remove it;
+    // app headers such as `X-Powered-By` are best removed in the app, though a proxy or CDN in front can also strip them.
+    let server_leak = names.contains(&"server");
+    let app_leak = names.iter().any(|n| *n != "server");
+    let layers = match (server_leak, app_leak) {
+        (true, false) => LayerHint {
+            prefer: vec![Layer::Server, Layer::Host],
+            skip: vec![Layer::Cdn, Layer::Framework, Layer::Frontend],
+            only: vec![],
+        },
+        (false, _) => LayerHint {
+            prefer: vec![Layer::Framework],
+            skip: vec![Layer::Frontend],
+            only: vec![],
+        },
+        (true, true) => LayerHint {
+            prefer: vec![Layer::Server, Layer::Host, Layer::Framework],
+            skip: vec![Layer::Frontend],
+            only: vec![],
+        },
+    };
+    // Say "version" only when a value carries one: `x-powered-by: Next.js` names the software, nothing more.
+    let what = if leaks.iter().any(|l| {
+        l.split_once(':')
+            .is_some_and(|(_, v)| v.bytes().any(|b| b.is_ascii_digit()))
+    }) {
+        "which software and version runs here"
+    } else {
+        "which software runs here"
+    };
     Outcome::fail(
         leaks.join("; "),
         format!(
-            "{} {} the software or version, which helps attackers match known vulnerabilities",
-            names.join(", "),
-            if names.len() == 1 {
-                "reveals"
-            } else {
-                "reveal"
-            }
+            "{} {} attackers {what}",
+            short_list(&names),
+            if names.len() == 1 { "tells" } else { "tell" }
         ),
     )
+    .with_layers(layers)
 }
 
 #[cfg(test)]
@@ -625,6 +839,7 @@ mod tests {
                 .collect(),
             https: true,
             insecure_probe: None,
+            redirect_cookies: vec![],
         }
     }
 
@@ -694,6 +909,81 @@ mod tests {
         assert_eq!(ro.status, Status::Fail);
         assert!(!ro.missing);
         assert!(csp(&ev(&[])).missing);
+    }
+
+    #[test]
+    fn csp_follows_the_effective_directive_for_elements_and_handlers() {
+        let st = |p: &str| csp(&ev(&[("Content-Security-Policy", p)]));
+        let n = "'nonce-abc'";
+        // script-src-elem overrides script-src for <script> elements.
+        let elem = st(&format!(
+            "script-src 'self' {n}; script-src-elem 'self' 'unsafe-inline'"
+        ));
+        assert_eq!(elem.status, Status::Fail);
+        assert!(elem
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("script-src-elem allows 'unsafe-inline'"));
+        assert_eq!(
+            elem.example.as_deref(),
+            Some(
+                "change only script-src-elem: script-src-elem 'self' 'nonce-<random-per-request>'"
+            )
+        );
+        // A strong script-src-elem does not hide a weak script-src for event handlers.
+        let handlers = st(&format!(
+            "script-src-elem 'self' {n}; script-src 'self' 'unsafe-inline'"
+        ));
+        assert_eq!(handlers.status, Status::Fail);
+        assert!(
+            handlers
+                .reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("event handlers"),
+            "{:?}",
+            handlers.reason
+        );
+        assert_eq!(
+            handlers.example.as_deref(),
+            Some("add (keep the rest): script-src-attr 'none'")
+        );
+        let attr = st(&format!(
+            "script-src 'self' {n}; script-src-attr 'unsafe-inline'"
+        ));
+        assert_eq!(attr.status, Status::Fail);
+        assert_eq!(
+            attr.example.as_deref(),
+            Some("change only script-src-attr: script-src-attr 'none'")
+        );
+        // Strong everywhere: nonce makes 'unsafe-inline' ignored, and handlers fall back to that script-src.
+        assert_eq!(
+            st(&format!("script-src 'self' {n} 'unsafe-inline'")).status,
+            Status::Pass
+        );
+        assert_eq!(
+            st(&format!(
+                "script-src {n} 'strict-dynamic'; script-src-attr 'none'"
+            ))
+            .status,
+            Status::Pass
+        );
+        // eval() is governed by script-src even when script-src-elem is strong.
+        let eval = st(&format!("default-src 'self'; script-src-elem 'self' 'strict-dynamic' {n}; script-src 'self' blob: 'unsafe-eval' {n}"));
+        assert_eq!(eval.status, Status::NeedsReview);
+        assert_eq!(
+            eval.reason.as_deref(),
+            Some("script-src allows 'unsafe-eval'")
+        );
+        // Two policies: the stricter one blocks, as browsers enforce both.
+        assert_eq!(
+            st(&format!(
+                "script-src 'unsafe-inline', script-src 'self' {n}"
+            ))
+            .status,
+            Status::Pass
+        );
     }
 
     #[test]
@@ -882,7 +1172,108 @@ mod tests {
         let js = cookies(&ev(&[("Set-Cookie", "theme=dark; Secure")]));
         assert_eq!(js.status, Status::NeedsReview);
         let none = cookies(&ev(&[("Set-Cookie", "a=1; SameSite=None; HttpOnly")]));
-        assert!(none.reason.unwrap().contains("SameSite=None but no Secure"));
+        assert!(none
+            .reason
+            .unwrap()
+            .starts_with("SameSite=None without Secure on a, so browsers reject it"));
+    }
+
+    #[test]
+    fn framework_csrf_cookies_may_be_script_readable() {
+        let laravel = cookies(&ev(&[
+            ("Set-Cookie", "XSRF-TOKEN=a; path=/; secure; samesite=lax"),
+            (
+                "Set-Cookie",
+                "app_session=b; path=/; secure; httponly; samesite=lax",
+            ),
+        ]));
+        assert_eq!(laravel.status, Status::Pass, "{:?}", laravel.reason);
+        let django = cookies(&ev(&[("Set-Cookie", "csrftoken=a; Secure; SameSite=Lax")]));
+        assert_eq!(django.status, Status::Pass);
+        // Express csurf keeps its secret in `_csrf`: still flagged, and Secure is still required.
+        let csurf = cookies(&ev(&[("Set-Cookie", "_csrf=a; Secure")]));
+        assert_eq!(csurf.status, Status::NeedsReview);
+        let insecure = cookies(&ev(&[("Set-Cookie", "XSRF-TOKEN=a; path=/")]));
+        assert_eq!(insecure.status, Status::Fail);
+    }
+
+    #[test]
+    fn cookies_from_redirects_are_checked_unless_the_page_sets_them_again() {
+        let mut e = ev(&[("Set-Cookie", "sid=1; Secure; HttpOnly")]);
+        e.redirect_cookies = vec!["tracker=x; Path=/".into(), "sid=0; Path=/".into()];
+        let o = cookies(&e);
+        assert_eq!(o.status, Status::Fail);
+        assert!(
+            o.reason.as_deref().unwrap_or("").contains("tracker"),
+            "{:?}",
+            o.reason
+        );
+        assert!(
+            !o.reason.as_deref().unwrap_or("").contains("sid"),
+            "{:?}",
+            o.reason
+        );
+        assert!(
+            o.detail.contains("tracker (no flags, on redirect)"),
+            "{}",
+            o.detail
+        );
+        let mut only_hops = ev(&[]);
+        only_hops.redirect_cookies = vec!["t=1; Secure; HttpOnly; SameSite=Lax".into()];
+        assert_eq!(cookies(&only_hops).status, Status::Pass);
+    }
+
+    #[test]
+    fn reasons_stay_short_and_keep_the_owner_note() {
+        let many = ev(&[
+            (
+                "Set-Cookie",
+                "visid_incap_1832240_extra_long_name=a; Path=/",
+            ),
+            ("Set-Cookie", "incap_ses_373_1832240=b; Path=/"),
+            ("Set-Cookie", "nlbi_1832240=c; Path=/"),
+        ]);
+        let why = cookies(&many).reason.unwrap();
+        assert!(why.chars().count() <= 100, "{why}");
+        assert_eq!(
+            why,
+            "Secure missing on 3 imperva cookies, so they are also sent over http:// (fix it there)"
+        );
+        let leak = info_disclosure(&ev(&[
+            ("X-Powered-By", "ASP.NET"),
+            ("X-AspNet-Version", "4.0.30319"),
+            ("X-AspNetMvc-Version", "5.2"),
+        ]))
+        .reason
+        .unwrap();
+        assert!(leak.chars().count() <= 100, "{leak}");
+        assert_eq!(super::infra_platform("akaalb_0001_www"), Some("akamai"));
+        assert_eq!(super::infra_platform("bm_so"), Some("akamai"));
+        // A cookie named like a token must not turn the reason into `NAME: …` (redaction would hide it).
+        let token = crate::redact::redact(
+            &cookies(&ev(&[("Set-Cookie", "API-TOKEN=abc; Secure")]))
+                .reason
+                .unwrap(),
+        )
+        .into_owned();
+        assert_eq!(
+            token,
+            "HttpOnly missing on API-TOKEN, so page scripts can read it"
+        );
+    }
+
+    #[test]
+    fn disclosure_reason_mentions_a_version_only_when_one_is_shown() {
+        let name_only = info_disclosure(&ev(&[("X-Powered-By", "Next.js")]));
+        assert_eq!(
+            name_only.reason.as_deref(),
+            Some("x-powered-by tells attackers which software runs here")
+        );
+        let versioned = info_disclosure(&ev(&[("Server", "nginx/1.24.0")]));
+        assert_eq!(
+            versioned.reason.as_deref(),
+            Some("server tells attackers which software and version runs here")
+        );
     }
 
     #[test]
@@ -905,6 +1296,9 @@ mod tests {
             o.detail,
             "server: Microsoft-IIS/10.0; x-powered-by: ASP.NET; x-powered-by: ARR/3.0"
         );
-        assert!(o.reason.unwrap().starts_with("server, x-powered-by reveal"));
+        assert!(o
+            .reason
+            .unwrap()
+            .starts_with("server, x-powered-by tell attackers which software and version"));
     }
 }

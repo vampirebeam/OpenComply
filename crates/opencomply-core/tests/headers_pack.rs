@@ -43,6 +43,7 @@ fn scan(headers: &[(&str, &str)], probe: InsecureProbe) -> Report {
             .collect(),
         https: true,
         insecure_probe: Some(probe),
+        redirect_cookies: vec![],
     };
     let platforms = detect_platforms(&http.headers, &http.source);
     evaluate_pack(
@@ -102,6 +103,104 @@ fn strong_site_passes_everything() {
     assert_eq!((g.grade, g.score), (Grade::APlus, Some(100)));
     assert!(render(&r, Format::Summary, false)
         .starts_with("headers https://example.com/ verdict=pass grade=A+ score=100 "));
+}
+
+/// Guidance follows the evidence: a `Server` version is fixed in the web server, never offered as an app setting;
+/// an `X-Powered-By` from the app is fixed in the app first. (Found live: nginx `Server` version was sent to Next.js.)
+#[test]
+fn disclosure_guidance_follows_the_leaked_header() {
+    let fixes = |headers: &[(&str, &str)]| {
+        let r = scan(headers, redirect(301));
+        finding(&r, "HDR-010")
+            .platform_fixes
+            .iter()
+            .map(|p| (p.platform.clone(), p.preferred))
+            .collect::<Vec<_>>()
+    };
+    let server_only = fixes(&[
+        ("Content-Type", "text/html"),
+        ("Server", "nginx/1.24.0 (Ubuntu)"),
+        ("x-nextjs-cache", "HIT"),
+    ]);
+    assert_eq!(
+        server_only,
+        [("nginx".to_string(), true)],
+        "{server_only:?}"
+    );
+
+    let behind_cdn = fixes(&[
+        ("Content-Type", "text/html"),
+        ("Server", "Apache/2.4.58"),
+        ("Via", "1.1 abc.cloudfront.net (CloudFront)"),
+    ]);
+    assert_eq!(behind_cdn, [("apache".to_string(), true)], "{behind_cdn:?}");
+
+    let app_only = fixes(&[
+        ("Content-Type", "text/html"),
+        ("Server", "nginx"),
+        ("X-Powered-By", "Next.js"),
+    ]);
+    assert_eq!(app_only[0], ("nextjs".to_string(), true), "{app_only:?}");
+
+    let both = scan(
+        &[
+            ("Content-Type", "text/html"),
+            ("Server", "nginx/1.24.0"),
+            ("X-Powered-By", "Next.js"),
+        ],
+        redirect(301),
+    );
+    let ids: Vec<&str> = finding(&both, "HDR-010")
+        .platform_fixes
+        .iter()
+        .map(|p| p.platform.as_str())
+        .collect();
+    assert!(ids.contains(&"nginx") && ids.contains(&"nextjs"), "{ids:?}");
+
+    let md = render(&both, Format::Markdown, false);
+    assert!(
+        md.contains("**nginx, preferred:**") || md.contains("**nextjs, preferred:**"),
+        "{md}"
+    );
+    assert!(!md.contains(";;"), "no doubled separators");
+}
+
+/// Load balancer / CDN cookies are not fixed in the app; app cookies are fixed in the framework first.
+#[test]
+fn cookie_guidance_follows_who_sets_the_cookie() {
+    let fixes = |cookie: &str| {
+        let r = scan(
+            &[
+                ("Content-Type", "text/html"),
+                ("Server", "cloudflare"),
+                ("X-Powered-By", "PHP/8.2"),
+                ("Set-Cookie", cookie),
+            ],
+            redirect(301),
+        );
+        let f = finding(&r, "HDR-009");
+        (
+            f.status,
+            f.platform_fixes
+                .iter()
+                .map(|p| (p.platform.clone(), p.preferred))
+                .collect::<Vec<_>>(),
+            f.reason.clone().unwrap_or_default(),
+        )
+    };
+    // AWS load balancer cookie behind Cloudflare: no Cloudflare or PHP advice, and the reason names who sets it.
+    let (status, lb, why) = fixes("AWSALB=abc; Path=/");
+    assert_eq!(status, Status::Fail);
+    assert!(lb.is_empty(), "{lb:?}");
+    assert_eq!(
+        why,
+        "Secure missing on 1 aws-elb cookie, so it is also sent over http:// (fix it there)"
+    );
+    let (_, cf, _) = fixes("__cf_bm=abc; Path=/");
+    assert_eq!(cf, [("cloudflare".to_string(), true)], "{cf:?}");
+    let (_, app, why) = fixes("PHPSESSID=abc; Path=/");
+    assert_eq!(app[0], ("php".to_string(), true), "{app:?}");
+    assert!(!why.contains("fix it there"), "{why}");
 }
 
 #[test]

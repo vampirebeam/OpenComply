@@ -19,6 +19,8 @@ pub enum Error {
         limit: &'static str,
         max: u64,
     },
+    /// Redirects that come back to a URL already visited (often bot protection answering automated clients).
+    RedirectLoop(Vec<String>),
     Network(String),
     Io(std::io::Error),
     NotImplemented(Module),
@@ -28,7 +30,9 @@ impl Error {
     pub fn exit_code(&self) -> ExitCode {
         match self {
             Error::InvalidTarget(_) | Error::InvalidConfig(_) => ExitCode::Usage,
-            Error::Timeout { .. } | Error::LimitExceeded { .. } => ExitCode::Incomplete,
+            Error::Timeout { .. } | Error::LimitExceeded { .. } | Error::RedirectLoop(_) => {
+                ExitCode::Incomplete
+            }
             Error::Network(_) | Error::Io(_) | Error::NotImplemented(_) => ExitCode::Error,
         }
     }
@@ -43,6 +47,11 @@ impl fmt::Display for Error {
                 write!(f, "{operation} timed out after {}s", after.as_secs())
             }
             Error::LimitExceeded { limit, max } => write!(f, "limit exceeded: {limit} (max {max})"),
+            Error::RedirectLoop(urls) => write!(
+                f,
+                "redirect loop: {} — the site keeps redirecting automated clients (it may block bots); check it in a browser",
+                urls.join(" → ")
+            ),
             Error::Network(why) => write!(f, "network error: {why}"),
             Error::Io(e) => write!(f, "I/O error: {e}"),
             Error::NotImplemented(m) => write!(f, "'{}' scanner is not implemented yet", m.name()),

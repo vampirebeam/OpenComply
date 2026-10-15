@@ -41,7 +41,7 @@ enum Command {
         /// Exit non-zero on `fail` (default), or also on undecided `review` items
         #[arg(long, value_enum, default_value_t = FailOnArg::Fail, global = true)]
         fail_on: FailOnArg,
-        /// Allow private / internal addresses (e.g. a staging server you are authorised to scan)
+        /// Allow private / internal addresses (e.g. a staging server you are authorised to scan); cloud metadata stays blocked
         #[arg(long, global = true)]
         allow_private: bool,
     },

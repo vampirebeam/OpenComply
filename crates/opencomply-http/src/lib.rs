@@ -61,8 +61,32 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
         || (seg[0] == 0x0100 && seg[1..4] == [0, 0, 0]))
 }
 
+/// Cloud instance metadata endpoints (AWS / GCP / Azure / `OpenStack`, AWS ECS, Alibaba, AWS on IPv6), also as
+/// IPv4-mapped or NAT64. Blocked even with `allow_private`: scanning an internal site never needs them.
+fn is_metadata(ip: IpAddr) -> bool {
+    const V4: [Ipv4Addr; 3] = [
+        Ipv4Addr::new(169, 254, 169, 254),
+        Ipv4Addr::new(169, 254, 170, 2),
+        Ipv4Addr::new(100, 100, 100, 200),
+    ];
+    match ip {
+        IpAddr::V4(v4) => V4.contains(&v4),
+        IpAddr::V6(v6) => {
+            let seg = v6.segments();
+            let o = v6.octets();
+            let embedded = Ipv4Addr::new(o[12], o[13], o[14], o[15]);
+            v6 == Ipv6Addr::new(0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254)
+                || v6.to_ipv4_mapped().is_some_and(|m| V4.contains(&m))
+                || (seg[0] == 0x64
+                    && seg[1] == 0xff9b
+                    && seg[2..6] == [0, 0, 0, 0]
+                    && V4.contains(&embedded))
+        }
+    }
+}
+
 fn allowed(ip: IpAddr, policy: NetPolicy) -> bool {
-    policy.allow_private || is_public(ip)
+    !is_metadata(ip) && (policy.allow_private || is_public(ip))
 }
 
 /// Validates a scan target URL before any network activity.
@@ -145,8 +169,12 @@ pub struct FetchResult {
     pub body_truncated: bool,
     /// Every response in order, including the final one.
     pub chain: Vec<RedirectHop>,
+    /// Set-Cookie values from redirect responses served over HTTPS (at most `MAX_REDIRECT_COOKIES`).
+    pub redirect_cookies: Vec<String>,
     pub peer: Option<SocketAddr>,
 }
+
+const MAX_REDIRECT_COOKIES: usize = 50;
 
 #[derive(Debug, Clone, Copy)]
 pub struct FetchOptions {
@@ -207,6 +235,7 @@ impl SafeClient {
         let mut url = validate_target(target, self.policy)?;
         let mut redirects = RedirectBudget::new(&self.limits);
         let mut chain = Vec::new();
+        let mut redirect_cookies = Vec::new();
         loop {
             let budget = deadline.budget(self.limits.io_timeout, "http request")?;
             let resp = tokio::time::timeout(budget, self.client.get(url.clone()).send())
@@ -248,10 +277,25 @@ impl SafeClient {
             });
             if opts.follow_redirects && resp.status().is_redirection() {
                 if let Some(loc) = location {
-                    redirects.follow()?;
+                    if url.scheme() == "https" {
+                        for (n, v) in &headers {
+                            if n.eq_ignore_ascii_case("set-cookie")
+                                && redirect_cookies.len() < MAX_REDIRECT_COOKIES
+                            {
+                                redirect_cookies.push(v.clone());
+                            }
+                        }
+                    }
                     let next = url
                         .join(&loc)
                         .map_err(|e| Error::InvalidTarget(format!("bad redirect: {e}")))?;
+                    if let Some(first) = chain.iter().position(|h| h.url == next.as_str()) {
+                        let mut cycle: Vec<String> =
+                            chain[first..].iter().map(|h| h.url.clone()).collect();
+                        cycle.push(next.to_string());
+                        return Err(Error::RedirectLoop(cycle));
+                    }
+                    redirects.follow()?;
                     url = validate_target(next.as_str(), self.policy)?;
                     continue;
                 }
@@ -268,13 +312,15 @@ impl SafeClient {
                 body,
                 body_truncated,
                 chain,
+                redirect_cookies,
                 peer,
             });
         }
     }
 }
 
-/// Streams the body and stops at `max` bytes (truncated, not an error: HTML fingerprints live near the start).
+/// Streams the body and stops at `max` bytes. The body only feeds platform fingerprints (near the start), so a
+/// stalled, timed-out or broken body ends as truncated with what was read — the headers are already complete.
 async fn read_body(
     mut resp: reqwest::Response,
     max: u64,
@@ -283,14 +329,12 @@ async fn read_body(
     let cap = usize::try_from(max).unwrap_or(usize::MAX);
     let mut buf: Vec<u8> = Vec::new();
     loop {
-        let budget = deadline.budget(std::time::Duration::from_secs(10), "http body")?;
-        let chunk = tokio::time::timeout(budget, resp.chunk())
-            .await
-            .map_err(|_| Error::Timeout {
-                operation: "http body",
-                after: budget,
-            })?
-            .map_err(|e| net_err(&e))?;
+        let Ok(budget) = deadline.budget(std::time::Duration::from_secs(10), "http body") else {
+            return Ok((Some(String::from_utf8_lossy(&buf).into_owned()), true));
+        };
+        let Ok(Ok(chunk)) = tokio::time::timeout(budget, resp.chunk()).await else {
+            return Ok((Some(String::from_utf8_lossy(&buf).into_owned()), true));
+        };
         let Some(chunk) = chunk else { break };
         let room = cap.saturating_sub(buf.len());
         if chunk.len() > room {
@@ -373,6 +417,30 @@ mod tests {
             }
         )
         .is_ok());
+    }
+
+    #[test]
+    fn metadata_is_blocked_even_when_private_targets_are_allowed() {
+        let p = NetPolicy {
+            allow_private: true,
+        };
+        for meta in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://169.254.170.2/v2/credentials",
+            "http://100.100.100.200/latest/meta-data/",
+            "http://[fd00:ec2::254]/",
+            "http://[::ffff:169.254.169.254]/",
+            "http://[64:ff9b::a9fe:a9fe]/",
+            "http://2852039166/",
+            "http://0xa9.0xfe.0xa9.0xfe/",
+        ] {
+            assert!(
+                validate_target(meta, p).is_err(),
+                "{meta} should be rejected"
+            );
+        }
+        assert!(validate_target("http://10.0.0.5/", p).is_ok());
+        assert!(validate_target("http://169.254.1.1/", p).is_ok());
     }
 
     #[test]

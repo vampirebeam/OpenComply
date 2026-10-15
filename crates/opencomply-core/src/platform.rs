@@ -208,54 +208,160 @@ const EXCLUDES: &[(&str, &str)] = &[
     ("github-pages", "x-github-api-version-selected"),
 ];
 
-/// Lowercase substrings that identify a platform in HTML. Kept specific to avoid matching ordinary content.
-const HTML_MARKERS: &[(&str, &str)] = &[
-    ("shopify", "cdn.shopify.com"),
-    ("wix", "static.wixstatic.com"),
-    ("squarespace", "static1.squarespace.com"),
-    ("webflow", "data-wf-site="),
-    ("webflow", "data-wf-page="),
-    ("wordpress", "/wp-content/"),
-    ("wordpress", "/wp-includes/"),
-    ("joomla", "content=\"joomla"),
-    ("joomla", "/media/jui/"),
-    ("joomla", "/media/system/js/"),
-    ("drupal", "content=\"drupal"),
-    ("drupal", "drupal-settings-json"),
-    ("magento", "mage/cookies"),
-    ("magento", "magento_"),
-    ("ghost", "content=\"ghost"),
-    ("django", "csrfmiddlewaretoken"),
-    ("rails", "content=\"authenticity_token\""),
-    ("nextjs", "__next_data__"),
-    ("nextjs", "/_next/static"),
-    ("nuxt", "__nuxt__"),
-    ("nuxt", "/_nuxt/"),
-    ("react", "data-reactroot"),
-    ("react", "react-dom"),
-    ("react-router", "__remixcontext"),
-    ("react-router", "__reactroutercontext"),
-    ("vue", "data-v-app"),
-    ("vue", "data-v-"),
-    ("angular", "ng-version="),
-    ("svelte", "__sveltekit"),
-    ("svelte", "data-sveltekit"),
-    ("astro", "/_astro/"),
-    ("astro", "astro-island"),
-    ("gatsby", "___gatsby"),
+/// Where an HTML marker must appear to count. Text that only mentions a platform (an article, a code sample,
+/// a link to another site) must not change the guidance.
+#[derive(Clone, Copy)]
+enum Marker {
+    /// Inside a tag or a `<script>` body — not page text.
+    Markup(&'static str),
+    /// In a `<script src>` / `<link href>` the page loads, or another `src` / `href` on this site (relative or the
+    /// same host): the page's own assets.
+    OwnPath(&'static str),
+    /// The host of a `<script src>` / `<link href>`: theme assets served by a hosted platform.
+    AssetHost(&'static str),
+}
+
+/// Lowercase markers that identify a platform in HTML. Kept specific to avoid matching ordinary content.
+const HTML_MARKERS: &[(&str, Marker)] = &[
+    ("shopify", Marker::AssetHost("cdn.shopify.com")),
+    ("wix", Marker::Markup("content=\"wix.com website builder")),
+    ("wix", Marker::AssetHost("static.wixstatic.com")),
+    ("wix", Marker::AssetHost("static.parastorage.com")),
+    ("squarespace", Marker::AssetHost("static1.squarespace.com")),
+    ("webflow", Marker::Markup("data-wf-site=")),
+    ("webflow", Marker::Markup("data-wf-page=")),
+    ("wordpress", Marker::OwnPath("/wp-content/")),
+    ("wordpress", Marker::OwnPath("/wp-includes/")),
+    ("joomla", Marker::Markup("content=\"joomla")),
+    ("joomla", Marker::OwnPath("/media/jui/")),
+    ("joomla", Marker::OwnPath("/media/system/js/")),
+    ("drupal", Marker::Markup("content=\"drupal")),
+    ("drupal", Marker::Markup("drupal-settings-json")),
+    ("magento", Marker::Markup("mage/cookies")),
+    ("magento", Marker::Markup("magento_")),
+    ("ghost", Marker::Markup("content=\"ghost")),
+    ("django", Marker::Markup("csrfmiddlewaretoken")),
+    ("rails", Marker::Markup("content=\"authenticity_token\"")),
+    ("nextjs", Marker::Markup("__next_data__")),
+    ("nextjs", Marker::OwnPath("/_next/static")),
+    ("nuxt", Marker::Markup("__nuxt__")),
+    ("nuxt", Marker::OwnPath("/_nuxt/")),
+    ("react", Marker::Markup("data-reactroot")),
+    ("react", Marker::Markup("react-dom")),
+    ("react-router", Marker::Markup("__remixcontext")),
+    ("react-router", Marker::Markup("__reactroutercontext")),
+    ("vue", Marker::Markup("data-v-app")),
+    ("vue", Marker::Markup("data-v-")),
+    ("angular", Marker::Markup("ng-version=")),
+    ("svelte", Marker::Markup("__sveltekit")),
+    ("svelte", Marker::Markup("data-sveltekit")),
+    ("astro", Marker::OwnPath("/_astro/")),
+    ("astro", Marker::Markup("astro-island")),
+    ("gatsby", Marker::Markup("___gatsby")),
 ];
 
+/// True when `pos` is inside a tag (`<…>`) or inside a `<script>…</script>` body.
+fn in_markup(body: &str, pos: usize) -> bool {
+    let before = &body[..pos];
+    let in_tag = before.rfind('<') > before.rfind('>');
+    let in_script = before.rfind("<script") > before.rfind("</script");
+    in_tag || in_script
+}
+
+/// `(tag, url)` for every `src=` / `href=` attribute value that sits inside a tag.
+fn asset_urls(body: &str) -> Vec<(&str, &str)> {
+    let mut out = Vec::new();
+    for attr in ["src=", "href="] {
+        for (at, _) in body.match_indices(attr) {
+            let preceded_by_space = body[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_whitespace());
+            if !preceded_by_space || !in_markup(body, at) {
+                continue;
+            }
+            let rest = &body[at + attr.len()..];
+            let url = match rest.chars().next() {
+                Some(q @ ('"' | '\'')) => rest[1..].split(q).next().unwrap_or(""),
+                _ => rest
+                    .split(|c: char| c.is_ascii_whitespace() || c == '>')
+                    .next()
+                    .unwrap_or(""),
+            };
+            let tag_start = body[..at].rfind('<').map_or(at, |i| i + 1);
+            let tag = body[tag_start..at]
+                .split(|c: char| c.is_ascii_whitespace())
+                .next()
+                .unwrap_or("");
+            out.push((tag, url));
+        }
+    }
+    out
+}
+
+/// Host of an absolute or protocol-relative URL; `None` for a relative one.
+fn url_host(url: &str) -> Option<&str> {
+    let rest = url
+        .strip_prefix("//")
+        .or_else(|| url.split_once("://").map(|(_, r)| r))?;
+    rest.split(['/', ':', '?', '#']).next()
+}
+
+/// Same site: equal hosts, or one is a subdomain of the other once a leading `www.` is dropped.
+fn same_site(host: &str, page_host: &str) -> bool {
+    let a = host.trim_start_matches("www.");
+    let b = page_host.trim_start_matches("www.");
+    a == b || a.ends_with(&format!(".{b}")) || b.ends_with(&format!(".{a}"))
+}
+
+fn marker_matches(
+    marker: Marker,
+    body: &str,
+    assets: &[(&str, &str)],
+    page_host: Option<&str>,
+) -> bool {
+    match marker {
+        Marker::Markup(needle) => body
+            .match_indices(needle)
+            .any(|(pos, _)| in_markup(body, pos)),
+        // A script or stylesheet the page loads is its own asset even from a CDN host (e.g. Next.js `assetPrefix`);
+        // a link or image elsewhere only counts on the same site.
+        Marker::OwnPath(needle) => assets.iter().any(|(tag, url)| {
+            (url.contains(needle) || url.starts_with(needle.trim_start_matches('/')))
+                && (matches!(*tag, "script" | "link")
+                    || match url_host(url) {
+                        None => true,
+                        Some(h) => page_host.is_some_and(|p| same_site(h, p)),
+                    })
+        }),
+        Marker::AssetHost(host) => assets
+            .iter()
+            .any(|(tag, url)| matches!(*tag, "script" | "link") && url_host(url) == Some(host)),
+    }
+}
+
+fn needle(marker: Marker) -> &'static str {
+    match marker {
+        Marker::Markup(n) | Marker::OwnPath(n) | Marker::AssetHost(n) => n,
+    }
+}
+
 /// Fingerprints frontends and CMSs from an HTML body (first `MAX_HTML_SCAN_BYTES` only). Same ordering and
-/// evidence rules as `detect_platforms`; merge both with `merge_platforms`.
+/// evidence rules as `detect_platforms`; merge both with `merge_platforms`. `source` (`GET <url>`) gives the
+/// page's host, so assets of another site are not taken as this site's.
 pub fn detect_from_html(html: &str, source: &str) -> Vec<DetectedPlatform> {
     let mut end = html.len().min(MAX_HTML_SCAN_BYTES);
     while !html.is_char_boundary(end) {
         end -= 1;
     }
     let body = html[..end].to_ascii_lowercase();
+    let page_url = source.rsplit(' ').next().unwrap_or("").to_ascii_lowercase();
+    let page_host = url_host(&page_url);
+    let assets = asset_urls(&body);
     let mut found: Vec<DetectedPlatform> = Vec::new();
-    for (id, needle) in HTML_MARKERS {
-        if found.iter().any(|d| d.id == *id) || !body.contains(needle) {
+    for (id, marker) in HTML_MARKERS {
+        if found.iter().any(|d| d.id == *id) || !marker_matches(*marker, &body, &assets, page_host)
+        {
             continue;
         }
         if let Some(def) = platform_def(id) {
@@ -266,13 +372,35 @@ pub fn detect_from_html(html: &str, source: &str) -> Vec<DetectedPlatform> {
                 evidence: Evidence {
                     class: EvidenceClass::Inferred,
                     source: source.to_string(),
-                    detail: format!("HTML contains \"{needle}\""),
+                    detail: format!("HTML contains \"{}\"", needle(*marker)),
                 },
             });
         }
     }
     found.sort_by_key(|d| d.layer);
     found
+}
+/// CDNs that a hosted platform runs itself: the site owner cannot configure them, so guidance must not send
+/// them there (Shopify and Webflow sites sit behind those companies' Cloudflare, Wix behind Google Cloud,
+/// GitHub Pages behind Fastly).
+const HOST_OWN_INFRA: &[(&str, &str)] = &[
+    ("shopify", "cloudflare"),
+    ("webflow", "cloudflare"),
+    ("wix", "google-cloud"),
+    ("github-pages", "fastly"),
+];
+
+/// Drops a CDN detection when it is the infrastructure of a detected hosted platform (see `HOST_OWN_INFRA`).
+pub fn without_host_infra(platforms: Vec<DetectedPlatform>) -> Vec<DetectedPlatform> {
+    let hidden: Vec<&str> = HOST_OWN_INFRA
+        .iter()
+        .filter(|(host, _)| platforms.iter().any(|p| p.id == *host))
+        .map(|(_, infra)| *infra)
+        .collect();
+    platforms
+        .into_iter()
+        .filter(|p| !hidden.contains(&p.id))
+        .collect()
 }
 
 /// Union of header- and HTML-based detections; the first evidence for a platform wins.
@@ -590,7 +718,11 @@ mod tests {
                 &["shopify"],
             ),
             (
-                r#"<img src="https://static.wixstatic.com/media/x.png">"#,
+                r#"<meta name="generator" content="Wix.com Website Builder">"#,
+                &["wix"],
+            ),
+            (
+                r#"<link rel="icon" href="https://static.wixstatic.com/media/x.png">"#,
                 &["wix"],
             ),
             (
@@ -605,6 +737,66 @@ mod tests {
         ];
         for (html, expected) in cases {
             assert_eq!(html_ids(html), *expected, "{html}");
+        }
+    }
+
+    /// Pages that only mention, link to or embed another platform must not be fingerprinted as it.
+    #[test]
+    fn html_mentions_links_and_embeds_are_not_the_sites_platform() {
+        let page = "GET https://blog.example.org/post";
+        let ids = |html: &str| -> Vec<&'static str> {
+            detect_from_html(html, page).iter().map(|d| d.id).collect()
+        };
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "<p>Themes live in /wp-content/themes and Vue adds data-v- attributes.</p>",
+                &[],
+            ),
+            (
+                "<pre><code>&lt;div data-v-app&gt; window.__NUXT__ ng-version=</code></pre>",
+                &[],
+            ),
+            (
+                r#"<a href="https://other-site.com/wp-content/uploads/a.jpg">photo</a>"#,
+                &[],
+            ),
+            (
+                r#"<img src="https://cdn.shopify.com/s/files/product.jpg">"#,
+                &[],
+            ),
+            (
+                r#"<img src="https://static.wixstatic.com/media/x.png">"#,
+                &[],
+            ),
+            (
+                r#"<img src="https://other.com/_next/static/media/a.png">"#,
+                &[],
+            ),
+            // Build assets from the site's own CDN host (Next.js assetPrefix) still count.
+            (
+                r#"<script src="https://b.cdn-example.net/_next/static/chunks/a.js"></script>"#,
+                &["nextjs"],
+            ),
+            // The site's own assets still count: relative, same host, or a subdomain of it.
+            (
+                r#"<link rel="stylesheet" href="wp-content/themes/x.css">"#,
+                &["wordpress"],
+            ),
+            (
+                r#"<script src="https://example.org/wp-includes/js/x.js"></script>"#,
+                &["wordpress"],
+            ),
+            (
+                r#"<script src="//static.blog.example.org/_next/static/a.js"></script>"#,
+                &["nextjs"],
+            ),
+            (
+                "<script src='https://cdn.shopify.com/s/files/theme.js'></script>",
+                &["shopify"],
+            ),
+        ];
+        for (html, expected) in cases {
+            assert_eq!(ids(html), *expected, "{html}");
         }
     }
 
@@ -627,12 +819,53 @@ mod tests {
     }
 
     #[test]
+    fn a_hosted_platforms_own_cdn_is_not_offered_as_a_place_to_fix() {
+        let ids = |headers: &[(&str, &str)], html: &str| -> Vec<&'static str> {
+            let h: Vec<(String, String)> = headers
+                .iter()
+                .map(|(n, v)| ((*n).to_string(), (*v).to_string()))
+                .collect();
+            let page = "GET https://shop.example.com/";
+            without_host_infra(merge_platforms(
+                detect_platforms(&h, page),
+                detect_from_html(html, page),
+            ))
+            .iter()
+            .map(|d| d.id)
+            .collect()
+        };
+        let wix = ids(&[("via", "1.1 google"), ("x-wix-request-id", "1")], "");
+        assert!(
+            wix.contains(&"wix") && !wix.contains(&"google-cloud"),
+            "{wix:?}"
+        );
+        let shop = ids(
+            &[("cf-ray", "1-BKK")],
+            r#"<script src="https://cdn.shopify.com/s/t.js"></script>"#,
+        );
+        assert_eq!(shop, ["shopify"]);
+        // Without the hosted platform the CDN is the site's own and stays.
+        assert_eq!(ids(&[("cf-ray", "1-BKK")], ""), ["cloudflare"]);
+        for (host, infra) in HOST_OWN_INFRA {
+            assert!(
+                platform_def(host).is_some() && platform_def(infra).is_some(),
+                "{host} {infra}"
+            );
+        }
+    }
+
+    #[test]
     fn every_signal_references_a_known_platform() {
         for (id, _) in SIGNALS.iter().map(|(i, s)| (i, s)) {
             assert!(platform_def(id).is_some(), "{id}");
         }
-        for (id, _) in HTML_MARKERS {
+        for (id, marker) in HTML_MARKERS {
             assert!(platform_def(id).is_some(), "{id}");
+            assert_eq!(
+                needle(*marker),
+                needle(*marker).to_ascii_lowercase(),
+                "{id}"
+            );
         }
     }
 }

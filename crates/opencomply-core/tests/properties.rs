@@ -165,12 +165,15 @@ proptest! {
                 chain: vec![RedirectHop { url: "http://x/".into(), status, location: None }],
                 final_url: "http://x/".into(),
             }),
+            redirect_cookies: vec![format!("hop=SECRETHOPVALUE;{cookie}")],
         };
         for rule in &pack.rules {
             let f = evaluate_rule(rule, Module::Headers, &EvalInput::Http(&http), &[]);
             prop_assert!(f.evidence[0].detail.chars().count() <= 301);
             prop_assert!(f.example_fix.as_ref().is_none_or(|e| e.chars().count() <= opencomply_core::MAX_EXAMPLE_CHARS));
             prop_assert!(!f.evidence[0].detail.contains("SECRETCOOKIEVALUE"), "{}", rule.id);
+            prop_assert!(!f.evidence[0].detail.contains("SECRETHOPVALUE"), "{}", rule.id);
+            prop_assert!(!f.reason.as_deref().unwrap_or("").contains("SECRETHOPVALUE"), "{}", rule.id);
         }
     }
 

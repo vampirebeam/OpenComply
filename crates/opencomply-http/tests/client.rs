@@ -25,10 +25,19 @@ async fn serve() -> String {
                 let n = sock.read(&mut buf).await.unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
                 let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+                if path == "/stall" {
+                    let _ = sock
+                        .write_all(b"HTTP/1.1 200 OK\r\nServer: nginx\r\nContent-Length: 100\r\nConnection: close\r\n\r\n<html")
+                        .await;
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    return;
+                }
                 let resp = match path.as_str() {
                     "/start" => "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
                     "/final" => "HTTP/1.1 200 OK\r\nX-Content-Type-Options: nosniff\r\nServer: nginx/1.25\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".to_string(),
                     "/loop" => "HTTP/1.1 301 Moved\r\nLocation: /loop\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                    "/meta" => "HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/latest/meta-data/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                    "/meta6" => "HTTP/1.1 302 Found\r\nLocation: http://[::ffff:169.254.169.254]/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
                     "/ftp" => "HTTP/1.1 302 Found\r\nLocation: ftp://example.com/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
                     "/big" => {
                         let body = "x".repeat(10_000);
@@ -37,6 +46,10 @@ async fn serve() -> String {
                     "/slow" => {
                         tokio::time::sleep(Duration::from_secs(5)).await;
                         "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+                    }
+                    p if p.starts_with("/hop/") => {
+                        let n: u32 = p.trim_start_matches("/hop/").parse().unwrap_or(0);
+                        format!("HTTP/1.1 302 Found\r\nLocation: /hop/{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", n + 1)
                     }
                     _ => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
                 };
@@ -138,8 +151,23 @@ async fn redirect_loop_hits_the_limit() {
         ..Limits::default()
     };
     let client = SafeClient::new(&limits, private_ok()).unwrap();
+    // A redirect back to a visited URL is reported as a loop, before the redirect limit.
     let err = client
         .fetch(&format!("{base}/loop"), follow(), &deadline())
+        .await
+        .unwrap_err();
+    match &err {
+        Error::RedirectLoop(urls) => {
+            assert_eq!(urls.len(), 2, "{urls:?}");
+            assert!(urls.iter().all(|u| u.ends_with("/loop")), "{urls:?}");
+        }
+        other => panic!("expected a redirect loop, got {other}"),
+    }
+    assert!(err.to_string().contains("may block bots"), "{err}");
+
+    // A long chain without repeats still stops at max_redirects.
+    let err = client
+        .fetch(&format!("{base}/hop/0"), follow(), &deadline())
         .await
         .unwrap_err();
     assert!(
@@ -204,4 +232,41 @@ async fn slow_server_times_out_instead_of_hanging() {
         matches!(err, Error::Timeout { .. } | Error::Network(_)),
         "{err}"
     );
+}
+
+#[tokio::test]
+async fn stalled_body_keeps_the_headers_and_the_part_already_read() {
+    let base = serve().await;
+    let limits = Limits {
+        io_timeout: Duration::from_secs(1),
+        ..Limits::default()
+    };
+    let client = SafeClient::new(&limits, private_ok()).unwrap();
+    let started = std::time::Instant::now();
+    let r = client
+        .fetch(&format!("{base}/stall"), follow(), &deadline())
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(r.status, 200);
+    assert!(r.headers.iter().any(|(n, v)| n == "server" && v == "nginx"));
+    assert!(r.body_truncated);
+    assert_eq!(r.body.as_deref(), Some("<html"));
+}
+
+#[tokio::test]
+async fn redirect_to_cloud_metadata_is_refused_at_that_hop() {
+    let base = serve().await;
+    let client = SafeClient::new(&Limits::default(), private_ok()).unwrap();
+    for path in ["/meta", "/meta6"] {
+        let err = client
+            .fetch(&format!("{base}{path}"), follow(), &deadline())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidTarget(_)), "{path}: {err}");
+    }
 }
