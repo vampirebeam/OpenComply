@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::evaluate::{directive_value, shown, HttpEvidence, InsecureProbe, Outcome};
-use crate::platform::Layer;
+use crate::platform::{platforms_named_by, Layer};
 use crate::render::MAX_EXAMPLE_CHARS;
 use crate::rules::{Builtin, LayerHint};
 
@@ -668,6 +668,7 @@ fn cookie_guidance(
                     Layer::Frontend,
                 ],
                 only,
+                sources: vec![],
             },
             who,
             note,
@@ -676,8 +677,7 @@ fn cookie_guidance(
         (
             LayerHint {
                 prefer: vec![Layer::Framework],
-                skip: vec![],
-                only: vec![],
+                ..LayerHint::default()
             },
             short_list(&flagged_names(cookies, pred)),
             String::new(),
@@ -759,50 +759,83 @@ fn has_version(server: &str) -> bool {
         .any(|rest| rest.trim_start().starts_with(|c: char| c.is_ascii_digit()))
 }
 
+/// A value blanked out by a load balancer or proxy (`XXXXXXXX`, `****`): the header is still sent but names nothing.
+fn is_masked(value: &str) -> bool {
+    value
+        .trim()
+        .chars()
+        .all(|c| matches!(c, 'X' | 'x' | '*' | '#' | '-' | ' '))
+}
+
 fn info_disclosure(http: &HttpEvidence) -> Outcome {
-    let mut leaks: Vec<String> = http
+    let mut leaks: Vec<(&str, &str)> = http
         .values("server")
         .into_iter()
         .filter(|v| has_version(v))
-        .map(|v| format!("server: {v}"))
+        .map(|v| ("server", v))
         .collect();
+    let mut masked: Vec<&str> = Vec::new();
     for h in TECH_HEADERS {
-        leaks.extend(http.values(h).into_iter().map(|v| format!("{h}: {v}")));
+        for v in http.values(h) {
+            if is_masked(v) {
+                if !masked.contains(&h) {
+                    masked.push(h);
+                }
+            } else {
+                leaks.push((h, v));
+            }
+        }
     }
     if leaks.is_empty() {
-        return Outcome::pass("no version or technology headers".into());
+        return Outcome::pass(if masked.is_empty() {
+            "no version or technology headers".into()
+        } else {
+            format!(
+                "no version or technology headers ({} masked)",
+                masked.join(", ")
+            )
+        });
     }
-    let names: Vec<&str> =
-        leaks
-            .iter()
-            .filter_map(|l| l.split(':').next())
-            .fold(Vec::new(), |mut acc, n| {
-                if !acc.contains(&n) {
-                    acc.push(n);
-                }
-                acc
-            });
+    let names: Vec<&str> = leaks.iter().fold(Vec::new(), |mut acc, (n, _)| {
+        if !acc.contains(n) {
+            acc.push(n);
+        }
+        acc
+    });
     // A `Server` version is set by the web server (or its host panel) — the app and the CDN guides cannot remove it;
     // app headers such as `X-Powered-By` are best removed in the app, though a proxy or CDN in front can also strip them.
+    // Each leaked value that names its software (`ARR/3.0` → IIS) points at a place that must be fixed too.
     let server_leak = names.contains(&"server");
     let app_leak = names.iter().any(|n| *n != "server");
+    let mut sources: Vec<&'static str> = Vec::new();
+    for (h, v) in &leaks {
+        for id in platforms_named_by(h, v) {
+            if !sources.contains(&id) {
+                sources.push(id);
+            }
+        }
+    }
     let layers = match (server_leak, app_leak) {
         (true, false) => LayerHint {
             prefer: vec![Layer::Server, Layer::Host],
             skip: vec![Layer::Cdn, Layer::Framework, Layer::Frontend],
             only: vec![],
+            sources,
         },
         (false, _) => LayerHint {
             prefer: vec![Layer::Framework],
             skip: vec![Layer::Frontend],
             only: vec![],
+            sources,
         },
         (true, true) => LayerHint {
             prefer: vec![Layer::Server, Layer::Host, Layer::Framework],
             skip: vec![Layer::Frontend],
             only: vec![],
+            sources,
         },
     };
+    let leaks: Vec<String> = leaks.iter().map(|(h, v)| format!("{h}: {v}")).collect();
     // Say "version" only when a value carries one: `x-powered-by: Next.js` names the software, nothing more.
     let what = if leaks.iter().any(|l| {
         l.split_once(':')

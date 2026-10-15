@@ -165,6 +165,81 @@ fn disclosure_guidance_follows_the_leaked_header() {
     assert!(!md.contains(";;"), "no doubled separators");
 }
 
+/// Every software that emits a leaked value gets its own fix, even past the usual cap: a proxy's `ARR/3.0`
+/// is removed in IIS, which neither app setting can do.
+#[test]
+fn disclosure_guidance_covers_every_leak_source() {
+    let r = scan(
+        &[
+            ("Content-Type", "text/html"),
+            ("Server", "cloudflare"),
+            ("X-Powered-By", "Next.js"),
+            ("X-Powered-By", "ARR/3.0"),
+            ("X-Powered-By", "ASP.NET"),
+        ],
+        redirect(301),
+    );
+    let fixes: Vec<(&str, bool)> = finding(&r, "HDR-010")
+        .platform_fixes
+        .iter()
+        .map(|p| (p.platform.as_str(), p.preferred))
+        .collect();
+    assert_eq!(
+        fixes,
+        [("iis", true), ("nextjs", true), ("aspnet", true)],
+        "{fixes:?}"
+    );
+
+    let one_source = scan(
+        &[
+            ("Content-Type", "text/html"),
+            ("Server", "cloudflare"),
+            ("X-Powered-By", "Express"),
+        ],
+        redirect(301),
+    );
+    let fixes: Vec<(&str, bool)> = finding(&one_source, "HDR-010")
+        .platform_fixes
+        .iter()
+        .map(|p| (p.platform.as_str(), p.preferred))
+        .collect();
+    assert_eq!(
+        fixes,
+        [("express", true), ("cloudflare", false)],
+        "{fixes:?}"
+    );
+}
+
+/// A value masked by a load balancer (`XXXXXXXX`) names no software: nothing leaks and nothing is offered to fix.
+#[test]
+fn masked_technology_headers_are_not_a_leak() {
+    let r = scan(
+        &[
+            ("Content-Type", "text/html"),
+            ("Server", "XXXXXX"),
+            ("X-Powered-By", "XXXXXXXXXXX"),
+            ("X-Powered-By", "XXXXXXXXX"),
+        ],
+        redirect(301),
+    );
+    let f = finding(&r, "HDR-010");
+    assert_eq!(f.status, Status::Pass, "{:?}", f.reason);
+    assert!(f.evidence[0].detail.contains("x-powered-by masked"));
+    assert!(f.platform_fixes.is_empty());
+
+    let mixed = scan(
+        &[
+            ("Content-Type", "text/html"),
+            ("X-Powered-By", "XXXXXXXXX"),
+            ("X-Powered-By", "PHP/8.2.1"),
+        ],
+        redirect(301),
+    );
+    let f = finding(&mixed, "HDR-010");
+    assert_eq!(f.status, Status::Fail);
+    assert_eq!(f.evidence[0].detail, "x-powered-by: PHP/8.2.1");
+}
+
 /// Load balancer / CDN cookies are not fixed in the app; app cookies are fixed in the framework first.
 #[test]
 fn cookie_guidance_follows_who_sets_the_cookie() {

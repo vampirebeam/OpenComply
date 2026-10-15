@@ -417,6 +417,28 @@ pub fn merge_platforms(
     primary
 }
 
+fn signal_matches(signal: &Signal, name: &str, value: &str) -> bool {
+    let value = value.trim().to_ascii_lowercase();
+    match signal {
+        Present(h) => name.eq_ignore_ascii_case(h),
+        ValueIs(h, v) => name.eq_ignore_ascii_case(h) && value == *v,
+        ValueStarts(h, v) => name.eq_ignore_ascii_case(h) && value.starts_with(v),
+        ValueContains(h, v) => name.eq_ignore_ascii_case(h) && value.contains(v),
+    }
+}
+
+/// Platforms that a single header names by itself (e.g. `x-powered-by: ARR/3.0` → IIS): the software that
+/// emits it, and so the place that can remove it.
+pub fn platforms_named_by(name: &str, value: &str) -> Vec<&'static str> {
+    let mut ids: Vec<&'static str> = Vec::new();
+    for (id, signal) in SIGNALS {
+        if !ids.contains(id) && signal_matches(signal, name, value) {
+            ids.push(*id);
+        }
+    }
+    ids
+}
+
 /// `headers` = (name, value) pairs as received; `source` describes the request, e.g. `GET https://example.com/`.
 /// Returns one entry per platform (first matching signal wins), ordered CDN → host → server → framework.
 pub fn detect_platforms(headers: &[(String, String)], source: &str) -> Vec<DetectedPlatform> {
@@ -428,15 +450,9 @@ pub fn detect_platforms(headers: &[(String, String)], source: &str) -> Vec<Detec
         if excluded || found.iter().any(|d| d.id == *id) {
             continue;
         }
-        let hit = headers.iter().find(|(name, value)| {
-            let value = value.trim().to_ascii_lowercase();
-            match signal {
-                Present(h) => name.eq_ignore_ascii_case(h),
-                ValueIs(h, v) => name.eq_ignore_ascii_case(h) && value == *v,
-                ValueStarts(h, v) => name.eq_ignore_ascii_case(h) && value.starts_with(v),
-                ValueContains(h, v) => name.eq_ignore_ascii_case(h) && value.contains(v),
-            }
-        });
+        let hit = headers
+            .iter()
+            .find(|(name, value)| signal_matches(signal, name, value));
         if let (Some((name, value)), Some(def)) = (hit, platform_def(id)) {
             found.push(DetectedPlatform {
                 id: def.id,

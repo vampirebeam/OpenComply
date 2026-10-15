@@ -85,41 +85,53 @@ pub const MAX_PLATFORM_FIXES: usize = 2;
 
 /// Which platform layers can fix what the evidence shows (e.g. a `Server` version is fixed in the web server, not the
 /// app). `prefer` overrides the rule's static `prefer`; layers in `skip` are not offered as places to fix;
-/// a non-empty `only` keeps just those platform ids (e.g. the load balancer that set a cookie).
+/// a non-empty `only` keeps just those platform ids (e.g. the load balancer that set a cookie); platforms in
+/// `sources` emitted the flagged evidence themselves, so they are always offered, preferred and never capped.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LayerHint {
     pub prefer: Vec<Layer>,
     pub skip: Vec<Layer>,
     pub only: Vec<&'static str>,
+    pub sources: Vec<&'static str>,
 }
 
 impl Rule {
-    /// Guidance for the platforms detected on the target: preferred layer first, then CDN → framework order,
-    /// capped at `MAX_PLATFORM_FIXES`. A `LayerHint` from the evidence decides relevance and preference.
+    /// Guidance for the platforms detected on the target: sources of the evidence first, then the preferred layer,
+    /// then CDN → framework order, capped at `MAX_PLATFORM_FIXES` (or the number of sources, if more).
+    /// A `LayerHint` from the evidence decides relevance and preference.
     pub fn platform_fixes(
         &self,
         detected: &[DetectedPlatform],
         hint: Option<&LayerHint>,
     ) -> Vec<PlatformFix> {
-        let mut fixes: Vec<PlatformFix> = detected
+        let is_source = |id: &str| hint.is_some_and(|h| h.sources.contains(&id));
+        let mut fixes: Vec<(bool, PlatformFix)> = detected
             .iter()
             .filter(|d| {
-                hint.is_none_or(|h| {
-                    !h.skip.contains(&d.layer) && (h.only.is_empty() || h.only.contains(&d.id))
-                })
+                is_source(d.id)
+                    || hint.is_none_or(|h| {
+                        !h.skip.contains(&d.layer) && (h.only.is_empty() || h.only.contains(&d.id))
+                    })
             })
             .filter_map(|d| {
-                self.platforms.get(d.id).map(|g| PlatformFix {
-                    platform: d.id.to_string(),
-                    how: g.how.clone(),
-                    note: g.note.clone(),
-                    preferred: hint.map_or(g.prefer, |h| h.prefer.contains(&d.layer)),
+                self.platforms.get(d.id).map(|g| {
+                    (
+                        is_source(d.id),
+                        PlatformFix {
+                            platform: d.id.to_string(),
+                            how: g.how.clone(),
+                            note: g.note.clone(),
+                            preferred: is_source(d.id)
+                                || hint.map_or(g.prefer, |h| h.prefer.contains(&d.layer)),
+                        },
+                    )
                 })
             })
             .collect();
-        fixes.sort_by_key(|f| !f.preferred);
-        fixes.truncate(MAX_PLATFORM_FIXES);
-        fixes
+        fixes.sort_by_key(|(source, f)| (!source, !f.preferred));
+        let sources = fixes.iter().filter(|(source, _)| *source).count();
+        fixes.truncate(MAX_PLATFORM_FIXES.max(sources));
+        fixes.into_iter().map(|(_, f)| f).collect()
     }
 }
 
