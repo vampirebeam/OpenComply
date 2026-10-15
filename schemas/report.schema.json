@@ -88,6 +88,15 @@
         "evidence"
       ]
     },
+    "Effort": {
+      "description": "How much work a fix usually takes, so the quick wins can be suggested first.",
+      "type": "string",
+      "enum": [
+        "quick",
+        "moderate",
+        "involved"
+      ]
+    },
     "Evidence": {
       "type": "object",
       "properties": {
@@ -116,9 +125,31 @@
       ]
     },
     "Finding": {
-      "description": "`reason` = why this result (scanner-generated, e.g. \"response has no Permissions-Policy header\").\n`fix_hint` = one-line action; `example_fix` = a concrete, copy-ready setting (e.g. the exact header line to add);\n`review_question` = the decision a person must make for review / unknown results; `remediation` = full guidance.",
+      "description": "`reason` = why this result (scanner-generated, e.g. \"response has no Permissions-Policy header\").\n`fix_hint` = one-line action; `example_fix` = a concrete, copy-ready setting (e.g. the exact header line to add);\n`review_question` = the decision a person must make for review / unknown results; `remediation` = full guidance.\n`advice` = an optional improvement on a result that already counts as passed (never changes verdict or grade);\n`effort`, `depends_on` (rule IDs to fix first) and `group` (fixed in the same place) order and batch the work.",
       "type": "object",
       "properties": {
+        "advice": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effort"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "evidence": {
           "type": "array",
           "items": {
@@ -132,6 +163,12 @@
           ]
         },
         "fix_hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group": {
           "type": [
             "string",
             "null"
@@ -336,6 +373,12 @@
     "Summary": {
       "type": "object",
       "properties": {
+        "advice": {
+          "description": "Findings carrying optional advice (also counted under their status).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "fail": {
           "type": "integer",
           "format": "uint",
@@ -373,7 +416,8 @@
         "unknown",
         "not_applicable",
         "needs_review",
-        "insufficient_evidence"
+        "insufficient_evidence",
+        "advice"
       ]
     },
     "Upgrade": {

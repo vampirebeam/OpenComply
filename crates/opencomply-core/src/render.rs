@@ -1,6 +1,7 @@
 //! Output rendering for people and AI agents.
-//! - Summary (default): verdict line, then per finding a status line plus short `why` / `fix` / `decide` lines, then a
-//!   `next:` line. Fails first, then unknown, then review; within a status, highest severity first.
+//! - Summary (default): verdict line, then per finding a status line plus short `why` / `fix` / `decide` lines, then
+//!   `together` lines and a `next:` line. Fails first, then unknown, then review, then passed results with advice;
+//!   within a status, dependencies first, then highest severity, then quickest fix.
 //! - JSON: summary-first field order so an agent can stop reading early; empty fields omitted.
 //! - Markdown: audit report with evidence, rule version and a dedicated "needs your review" section.
 //!
@@ -29,30 +30,124 @@ pub enum Format {
     Markdown,
 }
 
-/// `all` includes passing / not-applicable findings; otherwise only actionable ones are rendered.
+/// `all` includes every passing / not-applicable finding (otherwise only actionable ones and those with advice);
+/// `compact` (JSON) drops `remediation` and the evidence of passed / not-applicable findings without advice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RenderOptions {
+    pub all: bool,
+    pub compact: bool,
+}
+
+pub fn render(report: &Report, format: Format, all: bool) -> String {
+    render_with(
+        report,
+        format,
+        RenderOptions {
+            all,
+            compact: false,
+        },
+    )
+}
+
 /// Secrets are always redacted, then every text field is stripped of control characters (C0, DEL and C1 —
 /// JSON encoders leave DEL / C1 raw, and C1 `CSI` can drive terminals), whatever the format.
-pub fn render(report: &Report, format: Format, all: bool) -> String {
+/// Order: status, then what must be fixed first (`depends_on`), severity, effort (quick first), rule ID.
+pub fn render_with(report: &Report, format: Format, opts: RenderOptions) -> String {
     let mut redacted = redact_report(report);
     strip_controls(&mut redacted);
     let report = &redacted;
+    let depth = dependency_depth(&report.findings);
     let mut shown: Vec<&Finding> = report
         .findings
         .iter()
-        .filter(|f| all || f.status.is_actionable())
+        .filter(|f| opts.all || f.status.is_actionable() || f.advice.is_some())
         .collect();
     shown.sort_by(|a, b| {
+        let d = |f: &Finding| depth.get(f.rule_id.as_str()).copied().unwrap_or(0);
         a.status
             .priority()
             .cmp(&b.status.priority())
+            .then(d(a).cmp(&d(b)))
             .then(b.severity.cmp(&a.severity))
+            .then(
+                a.effort
+                    .map_or(u8::MAX, |e| e as u8)
+                    .cmp(&b.effort.map_or(u8::MAX, |e| e as u8)),
+            )
             .then(a.rule_id.cmp(&b.rule_id))
     });
     match format {
-        Format::Summary => render_summary(report, &shown, all),
-        Format::Json => render_json(report, &shown),
-        Format::Markdown => render_markdown(report, &shown),
+        Format::Summary => render_summary(report, &shown, opts.all),
+        Format::Json => render_json(report, &shown, opts.compact),
+        Format::Markdown => render_markdown(report, &shown, opts.all),
     }
+}
+
+/// Longest chain of still-open (actionable) dependencies under each actionable finding. Computed over every
+/// finding, not only the shown ones; bounded by the finding count so a cycle cannot loop.
+fn dependency_depth(findings: &[Finding]) -> std::collections::BTreeMap<&str, usize> {
+    let open: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.status.is_actionable())
+        .collect();
+    let mut depth: std::collections::BTreeMap<&str, usize> =
+        open.iter().map(|f| (f.rule_id.as_str(), 0)).collect();
+    for _ in 0..open.len() {
+        let mut changed = false;
+        for f in &open {
+            let d = f
+                .depends_on
+                .iter()
+                .filter_map(|dep| depth.get(dep.as_str()).map(|x| x + 1))
+                .max()
+                .unwrap_or(0)
+                .min(open.len());
+            if depth.get(f.rule_id.as_str()).is_some_and(|cur| *cur < d) {
+                depth.insert(f.rule_id.as_str(), d);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    depth
+}
+
+/// Dependencies of `f` that are still open in this report (fix those first).
+fn open_dependencies<'a>(report: &'a Report, f: &'a Finding) -> Vec<&'a str> {
+    f.depends_on
+        .iter()
+        .filter(|dep| {
+            report
+                .findings
+                .iter()
+                .any(|o| &o.rule_id == *dep && o.status.is_actionable())
+        })
+        .map(String::as_str)
+        .collect()
+}
+
+/// `(group, rule IDs)` for every group with at least two open findings (all open ones are shown), in shown order.
+fn fix_together<'a>(shown: &[&'a Finding]) -> Vec<(&'a str, Vec<&'a str>)> {
+    let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
+    for f in shown.iter().filter(|f| f.status.is_actionable()) {
+        if let Some(g) = f.group.as_deref() {
+            if !groups.iter().any(|(name, _)| *name == g) {
+                groups.push((g, Vec::new()));
+            }
+        }
+    }
+    for (name, ids) in &mut groups {
+        ids.extend(
+            shown
+                .iter()
+                .filter(|f| f.status.is_actionable() && f.group.as_deref() == Some(*name))
+                .map(|f| f.rule_id.as_str()),
+        );
+    }
+    groups.retain(|(_, ids)| ids.len() > 1);
+    groups
 }
 
 fn render_summary(report: &Report, shown: &[&Finding], all: bool) -> String {
@@ -76,6 +171,9 @@ fn render_summary(report: &Report, shown: &[&Finding], all: bool) -> String {
         s.insufficient_evidence,
         s.not_applicable
     );
+    if s.advice > 0 {
+        let _ = write!(out, " advice={}", s.advice);
+    }
     if !report.platforms.is_empty() {
         let ids: Vec<&str> = report.platforms.iter().map(|p| p.id).collect();
         let _ = write!(out, " platform={}", ids.join("+"));
@@ -88,16 +186,24 @@ fn render_summary(report: &Report, shown: &[&Finding], all: bool) -> String {
         summary_upgrades(&mut out, &g.upgrades, all);
     }
     for f in shown {
+        let effort = f
+            .effort
+            .map_or_else(String::new, |e| format!(" · {}", e.label()));
         let _ = writeln!(
             out,
-            "{} {} {} {}",
+            "{} {} {} {}{effort}",
             f.status.label(),
             one_line(&f.rule_id),
             f.severity.label(),
             one_line(&f.title)
         );
         if f.status == Status::Pass || f.status == Status::NotApplicable {
+            summary_advice(&mut out, f);
             continue;
+        }
+        let after = open_dependencies(report, f);
+        if !after.is_empty() {
+            let _ = writeln!(out, "  after: {}", one_line(&after.join(", ")));
         }
         if let Some(why) = why(f) {
             let _ = writeln!(out, "  why: {}", short(&why));
@@ -125,9 +231,30 @@ fn render_summary(report: &Report, shown: &[&Finding], all: bool) -> String {
                 let _ = writeln!(out, "  note ({id}): {}", one_line(note));
             }
         }
+        if let Some(advice) = &f.advice {
+            let _ = writeln!(out, "  advice: {}", one_line(advice));
+        }
+    }
+    for (group, ids) in fix_together(shown) {
+        let _ = writeln!(
+            out,
+            "together ({}): {}",
+            one_line(group),
+            one_line(&ids.join(" · "))
+        );
     }
     let _ = writeln!(out, "next: {}", next_steps(&s, verdict, true));
     out
+}
+
+/// A passed result's optional improvement: `advice:` and the check's own `example:`.
+fn summary_advice(out: &mut String, f: &Finding) {
+    if let Some(advice) = &f.advice {
+        let _ = writeln!(out, "  advice: {}", one_line(advice));
+        if let Some(example) = &f.example_fix {
+            let _ = writeln!(out, "  example: {}", one_line(example));
+        }
+    }
 }
 
 /// `to B: HDR-007 +15 required · HDR-003 +10`, then the impact of each step toward the next grade (every step with
@@ -217,8 +344,13 @@ fn md_upgrades(out: &mut String, upgrades: &[Upgrade]) {
 }
 
 fn next_steps(s: &Summary, verdict: Verdict, pointer: bool) -> String {
+    let advice = if s.advice > 0 {
+        format!(" · advice {} (optional)", s.advice)
+    } else {
+        String::new()
+    };
     if verdict == Verdict::Pass {
-        return "nothing to fix".to_string();
+        return format!("nothing to fix{advice}");
     }
     let mut parts = Vec::new();
     if s.fail > 0 {
@@ -231,7 +363,7 @@ fn next_steps(s: &Summary, verdict: Verdict, pointer: bool) -> String {
     if decide > 0 {
         parts.push(format!("decide {decide}"));
     }
-    let steps = parts.join(", ");
+    let steps = format!("{}{advice}", parts.join(", "));
     if pointer {
         format!("{steps} · evidence: --format markdown")
     } else {
@@ -258,7 +390,26 @@ pub(crate) struct JsonReport<'a> {
     findings: &'a [&'a Finding],
 }
 
-fn render_json(report: &Report, shown: &[&Finding]) -> String {
+fn render_json(report: &Report, shown: &[&Finding], compact: bool) -> String {
+    let trimmed: Vec<Finding>;
+    let compacted: Vec<&Finding>;
+    let shown = if compact {
+        trimmed = shown
+            .iter()
+            .map(|f| {
+                let mut f = (*f).clone();
+                f.remediation = None;
+                if !f.status.is_actionable() && f.advice.is_none() {
+                    f.evidence.clear();
+                }
+                f
+            })
+            .collect();
+        compacted = trimmed.iter().collect();
+        &compacted[..]
+    } else {
+        shown
+    };
     let doc = JsonReport {
         schema_version: report.schema_version,
         scanner_version: &report.scanner_version,
@@ -274,7 +425,8 @@ fn render_json(report: &Report, shown: &[&Finding]) -> String {
     serde_json::to_string(&doc).unwrap_or_else(|_| "{}".to_string())
 }
 
-fn render_markdown(report: &Report, shown: &[&Finding]) -> String {
+/// Without `all`, a passed finding is shown only for its advice, which has its own section.
+fn render_markdown(report: &Report, shown: &[&Finding], all: bool) -> String {
     let mut out = String::with_capacity(512 + shown.len() * 400);
     md_overview(&mut out, report);
     if let Some(g) = &report.grade {
@@ -283,9 +435,11 @@ fn render_markdown(report: &Report, shown: &[&Finding]) -> String {
     let pick = |pred: fn(Status) -> bool| -> Vec<&Finding> {
         shown.iter().copied().filter(|f| pred(f.status)).collect()
     };
-    md_fails(&mut out, &pick(|s| s == Status::Fail));
+    md_fails(&mut out, report, &pick(|s| s == Status::Fail));
+    md_together(&mut out, shown);
     md_review(
         &mut out,
+        report,
         &pick(|s| {
             matches!(
                 s,
@@ -293,11 +447,58 @@ fn render_markdown(report: &Report, shown: &[&Finding]) -> String {
             )
         }),
     );
+    let passed = pick(|s| matches!(s, Status::Pass | Status::NotApplicable));
+    md_advice(
+        &mut out,
+        &passed
+            .iter()
+            .copied()
+            .filter(|f| f.advice.is_some())
+            .collect::<Vec<_>>(),
+    );
     md_passed(
         &mut out,
-        &pick(|s| matches!(s, Status::Pass | Status::NotApplicable)),
+        &passed
+            .into_iter()
+            .filter(|f| all || f.advice.is_none())
+            .collect::<Vec<_>>(),
     );
     out
+}
+
+fn md_together(out: &mut String, shown: &[&Finding]) {
+    let groups = fix_together(shown);
+    if groups.is_empty() {
+        return;
+    }
+    out.push_str(
+        "\n## Fix together\n\nThese are set in the same place, so one change covers them.\n\n",
+    );
+    for (group, ids) in groups {
+        let _ = writeln!(
+            out,
+            "- **{}:** {}",
+            md_text(group),
+            md_text(&ids.join(" · "))
+        );
+    }
+}
+
+fn md_advice(out: &mut String, advised: &[&Finding]) {
+    if advised.is_empty() {
+        return;
+    }
+    out.push_str("\n## Advice (optional — already passed)\n\n| Rule | Check | Advice | Example |\n|---|---|---|---|\n");
+    for f in advised {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} |",
+            md_cell(&f.rule_id),
+            md_cell(&f.title),
+            md_cell(f.advice.as_deref().unwrap_or("")),
+            f.example_fix.as_deref().map(md_code).unwrap_or_default()
+        );
+    }
 }
 
 fn md_overview(out: &mut String, report: &Report) {
@@ -321,9 +522,14 @@ fn md_overview(out: &mut String, report: &Report) {
         };
         let _ = writeln!(out, "| Grade | **{}**{score}{capped} |", g.grade.label());
     }
+    let advice = if s.advice > 0 {
+        format!(" · {} with advice", s.advice)
+    } else {
+        String::new()
+    };
     let _ = writeln!(
         out,
-        "| Results | {} passed · {} failed · {} unknown · {} needs review · {} no evidence · {} not applicable |",
+        "| Results | {} passed · {} failed · {} unknown · {} needs review · {} no evidence · {} not applicable{advice} |",
         s.pass, s.fail, s.unknown, s.needs_review, s.insufficient_evidence, s.not_applicable
     );
     let _ = writeln!(
@@ -393,16 +599,28 @@ fn platform_cell(f: &Finding) -> String {
         .join(" · ")
 }
 
-fn md_fails(out: &mut String, fails: &[&Finding]) {
+fn md_fails(out: &mut String, report: &Report, fails: &[&Finding]) {
     if !fails.is_empty() {
-        out.push_str("\n## Needs action\n\n| Rule | Version | Severity | Finding | Why | Evidence | Fix | Example | Where to fix |\n|---|---|---|---|---|---|---|---|---|\n");
+        out.push_str("\n## Needs action\n\n| Rule | Version | Severity | Effort | Finding | Why | Evidence | Fix | Example | Where to fix |\n|---|---|---|---|---|---|---|---|---|---|\n");
         for f in fails {
+            let after = open_dependencies(report, f);
+            let after = if after.is_empty() {
+                String::new()
+            } else {
+                format!("**After {}.** ", md_cell(&after.join(", ")))
+            };
+            let advice = f
+                .advice
+                .as_deref()
+                .map(|a| format!(" Advice: {}", md_cell(a)))
+                .unwrap_or_default();
             let _ = writeln!(
                 out,
-                "| {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+                "| {} | {} | {} | {} | {} | {} | {} | {after}{}{advice} | {} | {} |",
                 md_cell(&f.rule_id),
                 md_cell(&f.rule_version),
                 f.severity.label(),
+                f.effort.map_or("—", |e| e.label()),
                 md_cell(&f.title),
                 md_cell(&why(f).unwrap_or_default()),
                 evidence_cell(f),
@@ -419,7 +637,7 @@ fn md_fails(out: &mut String, fails: &[&Finding]) {
     }
 }
 
-fn md_review(out: &mut String, decide: &[&Finding]) {
+fn md_review(out: &mut String, report: &Report, decide: &[&Finding]) {
     if !decide.is_empty() {
         out.push_str("\n## Needs your review\n");
         for f in decide {
@@ -432,6 +650,13 @@ fn md_review(out: &mut String, decide: &[&Finding]) {
                 f.severity.label(),
                 md_text(&f.rule_version)
             );
+            if let Some(e) = f.effort {
+                let _ = writeln!(out, "- **Effort:** {}", e.label());
+            }
+            let after = open_dependencies(report, f);
+            if !after.is_empty() {
+                let _ = writeln!(out, "- **After:** {}", md_text(&after.join(", ")));
+            }
             if let Some(why) = why(f) {
                 let _ = writeln!(out, "- **Why:** {}", md_text(&why));
             }
@@ -469,6 +694,9 @@ fn md_review(out: &mut String, decide: &[&Finding]) {
             }
             if let Some(r) = &f.remediation {
                 let _ = writeln!(out, "- **Guidance:** {}", md_text(r));
+            }
+            if let Some(a) = &f.advice {
+                let _ = writeln!(out, "- **Advice:** {}", md_text(a));
             }
         }
     }
@@ -512,6 +740,11 @@ fn strip_controls(r: &mut Report) {
         clean_opt(&mut f.example_fix);
         clean_opt(&mut f.review_question);
         clean_opt(&mut f.remediation);
+        clean_opt(&mut f.advice);
+        clean_opt(&mut f.group);
+        for d in &mut f.depends_on {
+            clean(d);
+        }
         for e in &mut f.evidence {
             clean(&mut e.source);
             clean(&mut e.detail);
@@ -593,7 +826,7 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::finding::{Evidence, EvidenceClass, Severity};
+    use crate::finding::{Effort, Evidence, EvidenceClass, Severity};
     use crate::report::{ExitCode, FailOn};
 
     fn finding(id: &str, status: Status, severity: Severity) -> Finding {
@@ -614,6 +847,10 @@ mod tests {
             platform_fixes: vec![],
             review_question: None,
             remediation: None,
+            advice: None,
+            effort: None,
+            depends_on: vec![],
+            group: None,
         }
     }
 
@@ -757,9 +994,9 @@ mod tests {
         let r = report(&[(Status::Fail, Severity::High)]);
         let md = render(&r, Format::Markdown, false);
         assert!(
-            md.contains("| Rule | Version | Severity | Finding | Why | Evidence | Fix | Example | Where to fix |")
+            md.contains("| Rule | Version | Severity | Effort | Finding | Why | Evidence | Fix | Example | Where to fix |")
         );
-        assert!(md.contains("| HDR-000 | 1.0.0 | high |"));
+        assert!(md.contains("| HDR-000 | 1.0.0 | high | — |"));
         assert!(md.contains("GET https://example.com `HDR-000 evidence`"));
     }
 
@@ -802,6 +1039,132 @@ mod tests {
             v["findings"][0]["platform_fixes"][0]["platform"],
             "cloudflare"
         );
+    }
+
+    fn planned(
+        id: &str,
+        severity: Severity,
+        effort: Effort,
+        deps: &[&str],
+        group: Option<&str>,
+    ) -> Finding {
+        Finding {
+            effort: Some(effort),
+            depends_on: deps.iter().map(|d| (*d).to_string()).collect(),
+            group: group.map(str::to_string),
+            ..finding(id, Status::Fail, severity)
+        }
+    }
+
+    /// A dependency that is still open moves its dependant down and adds `after:`; quick fixes go first among equals;
+    /// rules fixed in the same place are listed once on a `together` line.
+    #[test]
+    fn summary_orders_by_dependency_and_effort_and_groups() {
+        let findings = vec![
+            planned(
+                "HDR-001",
+                Severity::High,
+                Effort::Moderate,
+                &["HDR-007"],
+                Some("response-headers"),
+            ),
+            planned(
+                "HDR-003",
+                Severity::Medium,
+                Effort::Quick,
+                &[],
+                Some("response-headers"),
+            ),
+            planned("HDR-004", Severity::Low, Effort::Moderate, &[], None),
+            planned(
+                "HDR-005",
+                Severity::Low,
+                Effort::Quick,
+                &[],
+                Some("response-headers"),
+            ),
+            planned("HDR-007", Severity::High, Effort::Moderate, &[], None),
+        ];
+        let r = Report::new(Module::Headers, "https://example.com", findings.clone());
+        let out = render(&r, Format::Summary, false);
+        let status: Vec<&str> = out.lines().filter(|l| l.starts_with("FAIL")).collect();
+        assert_eq!(
+            status,
+            [
+                "FAIL HDR-007 high HDR-007 title · moderate",
+                "FAIL HDR-003 medium HDR-003 title · quick",
+                "FAIL HDR-005 low HDR-005 title · quick",
+                "FAIL HDR-004 low HDR-004 title · moderate",
+                "FAIL HDR-001 high HDR-001 title · moderate",
+            ]
+        );
+        assert!(out.contains("FAIL HDR-001 high HDR-001 title · moderate\n  after: HDR-007\n"));
+        assert!(out.contains("together (response-headers): HDR-003 · HDR-005 · HDR-001\n"));
+        let md = render(&r, Format::Markdown, false);
+        assert!(md.contains("**After HDR-007.**"));
+        assert!(md.contains("- **response-headers:** HDR-003 · HDR-005 · HDR-001"));
+
+        let mut done = findings;
+        if let Some(f) = done.iter_mut().find(|f| f.rule_id == "HDR-007") {
+            f.status = Status::Pass;
+        }
+        let out = render(
+            &Report::new(Module::Headers, "https://example.com", done),
+            Format::Summary,
+            false,
+        );
+        assert!(out.lines().nth(1).unwrap().starts_with("FAIL HDR-001 high"));
+        assert!(!out.contains("after:"));
+    }
+
+    #[test]
+    fn advice_is_shown_without_all_and_never_changes_the_verdict() {
+        let mut r = report(&[
+            (Status::Pass, Severity::High),
+            (Status::Pass, Severity::Low),
+        ]);
+        r.findings[0].advice = Some("add includeSubDomains".into());
+        r.findings[0].example_fix =
+            Some("Strict-Transport-Security: max-age=1; includeSubDomains".into());
+        assert_eq!(r.verdict(), Verdict::Pass);
+        assert_eq!(r.summary().advice, 1);
+        assert_eq!(
+            render(&r, Format::Summary, false),
+            "headers https://example.com verdict=pass pass=2 fail=0 unknown=0 review=0 no_evidence=0 n/a=0 advice=1\n\
+             PASS HDR-000 high HDR-000 title\n  advice: add includeSubDomains\n  example: Strict-Transport-Security: max-age=1; includeSubDomains\n\
+             next: nothing to fix · advice 1 (optional)\n"
+        );
+        let md = render(&r, Format::Markdown, false);
+        assert!(md.contains("## Advice (optional — already passed)"));
+        assert!(md.contains("| HDR-000 | HDR-000 title | add includeSubDomains |"));
+        assert!(!md.contains("## Passed and not applicable"));
+        assert!(md.contains("2 passed · 0 failed · 0 unknown · 0 needs review · 0 no evidence · 0 not applicable · 1 with advice"));
+        assert!(render(&r, Format::Markdown, true).contains("## Passed and not applicable"));
+        let v: serde_json::Value = serde_json::from_str(&render(&r, Format::Json, false)).unwrap();
+        assert_eq!(v["summary"]["advice"], 1);
+        assert_eq!(v["findings"][0]["advice"], "add includeSubDomains");
+        assert_eq!(v["findings"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn compact_json_drops_guidance_and_passed_evidence() {
+        let mut r = report(&[
+            (Status::Fail, Severity::High),
+            (Status::Pass, Severity::Low),
+        ]);
+        r.findings[0].remediation = Some("long guidance".into());
+        let opts = RenderOptions {
+            all: true,
+            compact: true,
+        };
+        let out = render_with(&r, Format::Json, opts);
+        assert!(!out.contains("remediation"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["schema_version"], 1);
+        let f = v["findings"].as_array().unwrap();
+        assert_eq!(f[0]["evidence"][0]["detail"], "HDR-000 evidence");
+        assert_eq!(f[1]["evidence"].as_array().unwrap().len(), 0);
+        assert!(render(&r, Format::Json, true).contains("long guidance"));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::finding::{Module, PlatformFix, Severity};
+use crate::finding::{Effort, Module, PlatformFix, Severity};
 use crate::platform::{platform_def, DetectedPlatform, Layer};
 use crate::render::{MAX_EXAMPLE_CHARS, MAX_HINT_CHARS, MAX_NOTE_CHARS};
 
@@ -23,6 +23,7 @@ pub const MAX_RULES: usize = 1000;
 pub const MAX_TEXT_CHARS: usize = 4096;
 const MAX_VALUE_CHARS: usize = 1024;
 const MAX_ID_CHARS: usize = 64;
+const MAX_GROUP_CHARS: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -67,6 +68,15 @@ pub struct Rule {
     /// Platform-specific guidance keyed by platform id (e.g. `cloudflare`, `vercel`, `nginx`).
     #[serde(default)]
     pub platforms: BTreeMap<String, PlatformGuide>,
+    /// How much work the fix usually takes.
+    #[serde(default)]
+    pub effort: Option<Effort>,
+    /// Rule IDs in this pack to fix before this one (e.g. HSTS after the http:// → https:// redirect).
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    /// Rules fixed in the same place share a group (e.g. `response-headers`).
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -373,8 +383,64 @@ impl RulePack {
                 );
             }
             r.check.validate(&at, &mut v);
+            if let Some(g) = &r.group {
+                let token = !g.is_empty()
+                    && g.len() <= MAX_GROUP_CHARS
+                    && g.bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+                if !token {
+                    v.push(
+                        &format!("{at}.group"),
+                        &format!("must be 1–{MAX_GROUP_CHARS} lowercase letters, digits or '-'"),
+                    );
+                }
+            }
+            for (n, dep) in r.depends_on.iter().enumerate() {
+                let loc = format!("{at}.depends_on[{n}]");
+                if dep == &r.id {
+                    v.push(&loc, "a rule cannot depend on itself");
+                } else if !self.rules.iter().any(|o| &o.id == dep) {
+                    v.push(&loc, "no rule with this id in the pack");
+                }
+            }
+        }
+        for id in self.dependency_cycles() {
+            v.push(&format!("{id}.depends_on"), "dependency cycle");
         }
         v.issues
+    }
+
+    /// Rule IDs that sit on a `depends_on` cycle. Iterative and bounded by the rule count, so a malformed pack
+    /// cannot loop or overflow the stack.
+    fn dependency_cycles(&self) -> Vec<String> {
+        let rules: Vec<&Rule> = self.rules.iter().take(MAX_RULES).collect();
+        let edges: Vec<Vec<usize>> = rules
+            .iter()
+            .map(|r| {
+                r.depends_on
+                    .iter()
+                    .filter_map(|d| rules.iter().position(|o| &o.id == d))
+                    .collect()
+            })
+            .collect();
+        let mut on_cycle = Vec::new();
+        for (start, rule) in rules.iter().enumerate() {
+            let mut seen = vec![false; rules.len()];
+            let mut stack: Vec<usize> = edges.get(start).cloned().unwrap_or_default();
+            while let Some(i) = stack.pop() {
+                if i == start {
+                    on_cycle.push(rule.id.clone());
+                    break;
+                }
+                if let Some(s) = seen.get_mut(i) {
+                    if !*s {
+                        *s = true;
+                        stack.extend(edges.get(i).into_iter().flatten().copied());
+                    }
+                }
+            }
+        }
+        on_cycle
     }
 }
 

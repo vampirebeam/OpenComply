@@ -24,14 +24,18 @@ pub use error::Error;
 pub use evaluate::{
     evaluate_pack, evaluate_rule, EvalInput, FileProbe, HttpEvidence, InsecureProbe, RedirectHop,
 };
-pub use finding::{Evidence, EvidenceClass, Finding, Module, PlatformFix, Severity, Status};
+pub use finding::{
+    Effort, Evidence, EvidenceClass, Finding, Module, PlatformFix, Severity, Status,
+};
 pub use grade::{grade_headers, Grading, Upgrade, UpgradeStep};
 pub use platform::{
-    detect_from_html, detect_platforms, merge_platforms, without_host_infra, DetectedPlatform,
-    Layer, MAX_HTML_SCAN_BYTES,
+    detect_from_html, detect_platforms, merge_platforms, meta_generator, without_host_infra,
+    DetectedPlatform, Layer, MAX_HTML_SCAN_BYTES,
 };
 pub use registry::{Provenance, RegistryError, RuleRegistry, Version, MAX_PACKS, MAX_TOTAL_RULES};
-pub use render::{render, Format, MAX_EXAMPLE_CHARS, MAX_HINT_CHARS, MAX_NOTE_CHARS};
+pub use render::{
+    render, render_with, Format, RenderOptions, MAX_EXAMPLE_CHARS, MAX_HINT_CHARS, MAX_NOTE_CHARS,
+};
 pub use report::{ExitCode, FailOn, Report, RulePackRef, Summary, Verdict, REPORT_SCHEMA_VERSION};
 pub use scanner::{Limits, Scanner, Target};
 pub use standards::{Assessment, Grade, ReadinessLevel, Standard, STANDARDS};

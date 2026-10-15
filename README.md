@@ -5,7 +5,7 @@
 <h3 align="center">เครื่องมือตรวจสอบความปลอดภัยของเว็บไซต์<br/>ระบุสิ่งที่ขาด วิธีแก้ไข และตำแหน่งที่ต้องแก้ไข ในรูปแบบที่ทั้งนักพัฒนาและ AI agent นำไปใช้ต่อได้</h3>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.4-f59e0b?style=flat-square" alt="Version 0.2.4" />
+  <img src="https://img.shields.io/badge/version-0.3.0-f59e0b?style=flat-square" alt="Version 0.3.0" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-22c55e?style=flat-square" alt="Apache-2.0 License" /></a>
   <img src="https://img.shields.io/badge/rust-1.90-0891b2?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.90" />
   <img src="https://img.shields.io/badge/works_with-Claude_Code_%7C_Codex_%7C_Cursor_%7C_Gemini_CLI-7C3AED?style=flat-square" alt="Works with Claude Code, Codex, Cursor and Gemini CLI" />
@@ -95,6 +95,7 @@ OpenComply รองรับการแสดงผลหลายรูปแ
 | `--format json` | ส่งออกผลการตรวจสอบเป็นข้อมูล JSON สำหรับนำไปประมวลผลต่อ |
 | `--format markdown` | สร้างรายงาน Markdown พร้อมรายละเอียดและหลักฐานการตรวจสอบ |
 | `--all` | แสดงผลการตรวจสอบทั้งหมด รวมถึงรายการที่ผ่านเกณฑ์ |
+| `--compact` | ใช้กับ `--format json`: ตัดคำอธิบายยาวและหลักฐานของรายการที่ผ่านออก (ประหยัด Token) |
 | `--fail-on review` | กำหนดให้รายการที่ต้องตรวจสอบเพิ่มเติม (`REVIEW`) ส่งผลให้คำสั่งไม่สำเร็จด้วย |
 | `--allow-private` | อนุญาตให้ตรวจระบบภายในที่ได้รับอนุญาต เช่น staging (ค่าเริ่มต้นปฏิเสธ IP ภายใน ส่วน cloud metadata ปฏิเสธเสมอ) |
 
@@ -144,11 +145,12 @@ OpenComply อ่านหลักฐานจาก response แล้วเ�
 
 | สิ่งที่ตรวจพบ | ผลต่อคำแนะนำ |
 |---|---|
-| Platform จาก header, cookie และ HTML (53 ระบบ เช่น Cloudflare, Vercel, nginx, IIS, WordPress, Laravel, Next.js) | แสดงวิธีแก้เฉพาะ platform นั้น (`how (…)`) และข้อจำกัด (`note (…)`) สูงสุด 2 ตำแหน่ง |
+| Platform จาก header, cookie และ HTML (54 ระบบ เช่น Cloudflare, Vercel, nginx, IIS, WordPress, Laravel, Next.js) | แสดงวิธีแก้เฉพาะ platform นั้น (`how (…)`) และข้อจำกัด (`note (…)`) ปกติสูงสุด 2 ตำแหน่ง ถ้าข้อมูลที่รั่วมาจากหลายซอฟต์แวร์ ทุกตัวจะได้วิธีแก้ของตัวเอง |
 | หลายชั้นแก้ได้ เช่น Cloudflare + Next.js | ระบุตำแหน่งที่ควรแก้ก่อน (`preferred`) เช่น nonce ต้องสร้างที่ app ไม่ใช่ CDN |
 | ค่าปัจจุบันของ header เช่น CSP เดิม | สร้าง `example:` จากค่าจริงของเว็บ คง host เดิม ลบเฉพาะส่วนที่ไม่ปลอดภัย และระบุ directive ที่ต้องเปลี่ยน |
 | Content-Type ไม่ใช่ HTML (เช่น JSON API) | rule ที่ใช้เฉพาะ browser (CSP, Permissions-Policy, clickjacking) เป็น `N/A` |
 | พฤติกรรมของ `http://` | แยกกรณีไม่ redirect, redirect ชั่วคราว (302/307) และ redirect ถาวร (301/308) |
+| การแก้ที่ต้องทำตามลำดับ หรือตั้งค่าที่เดียวกัน | เรียงตามลำดับที่ต้องทำ (`after:`) ระบุแรงที่มักต้องใช้ (`quick` · `moderate` · `involved`) และจัดกลุ่มไว้ด้วยกัน (`together`) |
 
 **แยกสิ่งที่ตรวจพบจริงออกจากสิ่งที่อนุมาน:** ค่าของ header ที่ใช้ตัดสินผลเป็น `verified` ส่วน platform เป็น `inferred` และใช้เพื่อเลือกคำแนะนำเท่านั้น **ไม่มีผลต่อ PASS / FAIL**
 
@@ -162,41 +164,47 @@ OpenComply อ่านหลักฐานจาก response แล้วเ�
 ```console
 $ opencomply scan headers https://example.com/
 
-headers https://example.com/ verdict=fail grade=D score=63 pass=6 fail=3 unknown=0 review=0 no_evidence=0 n/a=1 platform=cloudflare+nextjs
+headers https://example.com/ verdict=fail grade=D score=63 pass=6 fail=3 unknown=0 review=0 no_evidence=0 n/a=1 advice=1 platform=cloudflare+nextjs
 to C: HDR-002 +26 required → B 89
 to A+: HDR-002 +26 required · HDR-005 +6 required → A+ 95
   impact (HDR-002): Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes
   impact of HDR-005: --all
-FAIL HDR-002 high Content-Security-Policy
+FAIL HDR-002 high Content-Security-Policy · involved
   why: script-src allows 'unsafe-inline' without a nonce or hash, so injected inline scripts can run
   fix: enforce a CSP whose script-src allows no inline or wildcard scripts
   example: change only script-src: script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com
   how (nextjs, preferred): middleware (proxy): create a nonce per request, set the CSP header and read it with headers() in the layout
   how (cloudflare): Rules > Transform Rules > Modify Response Header > Set static: Content-Security-Policy
   note (cloudflare): A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker
-FAIL HDR-005 low Permissions-Policy missing
+FAIL HDR-005 low Permissions-Policy missing · quick
   why: response has no permissions-policy header
   fix: send a Permissions-Policy that turns off features the site does not use
   example: Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
   how (cloudflare): Rules > Transform Rules > Modify Response Header > Set static: Permissions-Policy
   how (nextjs): next.config.js headers(): { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" }
-FAIL HDR-010 low Technology disclosure
+FAIL HDR-010 low Technology disclosure · quick
   why: x-powered-by tells attackers which software runs here
-  fix: remove X-Powered-By and version numbers from Server and similar headers
+  fix: remove X-Powered-By, version numbers and internal host names from headers and meta generator
   how (nextjs, preferred): next.config.js: poweredByHeader: false
   how (cloudflare): Rules > Transform Rules > Modify Response Header > Remove: X-Powered-By
-next: fix 3 · evidence: --format markdown
+PASS HDR-001 high Strict-Transport-Security
+  advice: add includeSubDomains once every subdomain serves HTTPS, so subdomains are protected too
+  example: Strict-Transport-Security: max-age=31536000; includeSubDomains
+next: fix 3 · advice 1 (optional) · evidence: --format markdown
 ```
 
 | บรรทัด | ความหมาย |
 |---|---|
-| บรรทัดแรก | module · target · `verdict` · เกรดและคะแนน · จำนวนในแต่ละสถานะ · platform ที่ตรวจพบ |
+| บรรทัดแรก | module · target · `verdict` · เกรดและคะแนน · จำนวนในแต่ละสถานะ · `advice=N` เมื่อมีคำแนะนำเพิ่มเติม · platform ที่ตรวจพบ |
 | `to …:` | rule ที่ต้องแก้เพื่อให้ได้เกรดเป้าหมาย คะแนนที่เพิ่ม (`required` = ขาดไม่ได้) และ `→` ผลที่จะได้จริงหลังแก้ |
 | `impact` | ผลกระทบของการแก้ rule นั้น (`--all` แสดงครบทุกขั้น) |
-| `FAIL` / `REVIEW` / `UNKNOWN` | สถานะ · rule ID · severity · สิ่งที่ตรวจพบ เรียงจากรายการสำคัญที่สุด |
+| `FAIL` / `REVIEW` / `UNKNOWN` | สถานะ · rule ID · severity · สิ่งที่ตรวจพบ · แรงที่มักต้องใช้ เรียงตามลำดับที่ควรทำ |
+| `after:` | ต้องแก้ rule เหล่านี้ก่อน เช่น HSTS หลังตั้ง redirect จาก `http://` |
 | `why:` · `fix:` · `example:` | เหตุผล · สิ่งที่ต้องทำ · ตัวอย่างการตั้งค่า (ต้องแทนค่าใน `<...>` และปรับให้เข้ากับระบบจริง) |
 | `how (…)` / `note (…)` | ตำแหน่งที่แก้ไขบน platform นั้น และข้อจำกัด · `preferred` = ตำแหน่งที่แนะนำ |
 | `decide:` | ประเด็นที่ผู้ใช้ต้องตัดสินใจ (เฉพาะ `REVIEW` / `UNKNOWN`) |
+| `PASS` + `advice:` | ผ่านแล้ว เป็นคำแนะนำเพิ่มเติมที่ไม่บังคับ ไม่มีผลต่อ verdict และเกรด |
+| `together (…)` | rule ที่ตั้งค่าที่เดียวกัน แก้ครั้งเดียวได้ทั้งกลุ่ม |
 | `next:` | สรุปสิ่งที่ต้องทำต่อ |
 
 </details>
@@ -211,11 +219,11 @@ next: fix 3 · evidence: --format markdown
 | | |
 |---|---|
 | Target | `https://example.com/` |
-| Verdict | **FAIL** — fix 3 |
+| Verdict | **FAIL** — fix 3 · advice 1 (optional) |
 | Grade | **D** (63/100) |
-| Results | 6 passed · 3 failed · 0 unknown · 0 needs review · 0 no evidence · 1 not applicable |
-| Scanner | 0.2.4 · report schema 1 |
-| Rule packs | opencomply-headers 1.0.0 (signed by opencomply-2026, sha256 `b256d2d6244f…`) |
+| Results | 6 passed · 3 failed · 0 unknown · 0 needs review · 0 no evidence · 1 not applicable · 1 with advice |
+| Scanner | 0.3.0 · report schema 1 |
+| Rule packs | opencomply-headers 1.1.0 (signed by opencomply-2026, sha256 `321106287793…`) |
 | Platform | Cloudflare (CDN / WAF, from `cf-ray: 8f1c2a3b4d5e6f70-BKK`) · Next.js (framework / CMS, from `x-powered-by: Next.js`) — detected from response headers, used only for fix guidance |
 
 ## How to raise the grade
@@ -228,11 +236,17 @@ next: fix 3 · evidence: --format markdown
 
 ## Needs action
 
-| Rule | Version | Severity | Finding | Why | Evidence | Fix | Example | Where to fix |
-|---|---|---|---|---|---|---|---|---|
-| HDR-002 | 1.0.0 | high | Content-Security-Policy | script-src allows 'unsafe-inline' without a nonce or hash, so injected inline scripts can run | GET https://example.com/ `content-security-policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; frame-ancestors 'self'` | CSP limits which scripts can run, so injected code (XSS) is blocked. Generate a new random nonce per response and put it on every &lt;script&gt;, or use hashes for fixed inline scripts. The example is a starting point, not a drop-in policy: review the whole existing CSP, check third-party scripts and framework hydration, roll out with Content-Security-Policy-Report-Only, fix what it reports, then enforce. | `change only script-src: script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com` | **nextjs, preferred:** middleware (proxy): create a nonce per request, set the CSP header and read it with headers() in the layout · **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Set static: Content-Security-Policy — ⚠ A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker |
-| HDR-005 | 1.0.0 | low | Permissions-Policy missing | response has no permissions-policy header | GET https://example.com/ `(header not present)` | Permissions-Policy turns off browser features (camera, microphone, location, payment) the site does not use, so injected or embedded code cannot use them. List only features the site needs with (self). | `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()` | **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Set static: Permissions-Policy · **nextjs:** next.config.js headers(): { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" } |
-| HDR-010 | 1.0.0 | low | Technology disclosure | x-powered-by tells attackers which software runs here | GET https://example.com/ `x-powered-by: Next.js` | Version headers let attackers look up known vulnerabilities for your exact software without probing. Removing them is not a fix for outdated software, but it stops free reconnaissance. Keep the software updated as well. |  | **nextjs, preferred:** next.config.js: poweredByHeader: false · **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Remove: X-Powered-By |
+| Rule | Version | Severity | Effort | Finding | Why | Evidence | Fix | Example | Where to fix |
+|---|---|---|---|---|---|---|---|---|---|
+| HDR-002 | 1.1.0 | high | involved | Content-Security-Policy | script-src allows 'unsafe-inline' without a nonce or hash, so injected inline scripts can run | GET https://example.com/ `content-security-policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; frame-ancestors 'self'` | CSP limits which scripts can run, which reduces what injected code (XSS) can do. Generate a new random nonce per response and put it on every &lt;script&gt;, or use hashes for fixed inline scripts. With nonces, also set base-uri 'self' so an injected &lt;base&gt; tag cannot send the page's own scripts to another site. The example is a starting point, not a drop-in policy: review the whole existing CSP, check third-party scripts and framework hydration, roll out with Content-Security-Policy-Report-Only, fix what it reports, then enforce. | `change only script-src: script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com` | **nextjs, preferred:** middleware (proxy): create a nonce per request, set the CSP header and read it with headers() in the layout · **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Set static: Content-Security-Policy — ⚠ A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker |
+| HDR-005 | 1.1.0 | low | quick | Permissions-Policy missing | response has no permissions-policy header | GET https://example.com/ `(header not present)` | Permissions-Policy turns off browser features (camera, microphone, location, payment) the site does not use, so injected or embedded code cannot use them. List only features the site needs with (self). | `Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()` | **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Set static: Permissions-Policy · **nextjs:** next.config.js headers(): { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" } |
+| HDR-010 | 1.1.0 | low | quick | Technology disclosure | x-powered-by tells attackers which software runs here | GET https://example.com/ `x-powered-by: Next.js` | Version headers let attackers look up known vulnerabilities for your exact software without probing. Removing them is not a fix for outdated software, but it stops free reconnaissance. Keep the software updated as well. The same applies to a &lt;meta name="generator"&gt; tag with a version, and to internal server names in X-Backend-Server or Server-Timing. |  | **nextjs, preferred:** next.config.js: poweredByHeader: false · **cloudflare:** Rules &gt; Transform Rules &gt; Modify Response Header &gt; Remove: X-Powered-By |
+
+## Advice (optional — already passed)
+
+| Rule | Check | Advice | Example |
+|---|---|---|---|
+| HDR-001 | Strict-Transport-Security | add includeSubDomains once every subdomain serves HTTPS, so subdomains are protected too | `Strict-Transport-Security: max-age=31536000; includeSubDomains` |
 ```
 
 </details>
@@ -244,7 +258,7 @@ next: fix 3 · evidence: --format markdown
 
 ```json
 
-{"schema_version":1,"scanner_version":"0.2.4","module":"headers","target":"https://example.com/","rule_packs":[{"id":"opencomply-headers","version":"1.0.0","sha256":"b256d2d6244f568acd376cc1cd747b9a0728402d21e31836b0ee2c04bf9af605","signed_by":"opencomply-2026"}],"platforms":[{"id":"cloudflare","name":"Cloudflare","layer":"cdn","evidence":{"class":"inferred","source":"GET https://example.com/","detail":"cf-ray: 8f1c2a3b4d5e6f70-BKK"}},{"id":"nextjs","name":"Next.js","layer":"framework","evidence":{"class":"inferred","source":"GET https://example.com/","detail":"x-powered-by: Next.js"}}],"verdict":"fail","grade":{"grade":"D","score":63,"upgrades":[{"to":"C","steps":[{"rule_id":"HDR-002","points":26,"required":true,"impact":"Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes"}],"result":"B","result_score":89},{"to":"A+","steps":[{"rule_id":"HDR-002","points":26,"required":true,"impact":"Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes"},{"rule_id":"HDR-005","points":6,"required":true,"impact":"Features not listed (camera, location, payment) stop working, including in embedded frames"}],"result":"A+","result_score":95}]},"summary":{"pass":6,"fail":3,"unknown":0,"not_applicable":1,"needs_review":0,"insufficient_evidence":0},"findings":[{"rule_id":"HDR-002","rule_version":"1.0.0","title":"Content-Security-Policy","status":"fail","severity":"high","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"content-security-policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; frame-ancestors 'self'"}],"reason":"script-src allows 'unsafe-inline' without a nonce or hash, so injected inline scripts can run","fix_hint":"enforce a CSP whose script-src allows no inline or wildcard scripts","example_fix":"change only script-src: script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com","platform_fixes":[{"platform":"nextjs","how":"middleware (proxy): create a nonce per request, set the CSP header and read it with headers() in the layout","preferred":true},{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Set static: Content-Security-Policy","note":"A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker"}],"remediation":"CSP limits which scripts can run, so injected code (XSS) is blocked. Generate a new random nonce per response and put it on every <script>, or use hashes for fixed inline scripts. The example is a starting point, not a drop-in policy: review the whole existing CSP, check third-party scripts and framework hydration, roll out with Content-Security-Policy-Report-Only, fix what it reports, then enforce."},{"rule_id":"HDR-005","rule_version":"1.0.0","title":"Permissions-Policy missing","status":"fail","severity":"low","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"(header not present)"}],"reason":"response has no permissions-policy header","fix_hint":"send a Permissions-Policy that turns off features the site does not use","example_fix":"Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()","platform_fixes":[{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Set static: Permissions-Policy"},{"platform":"nextjs","how":"next.config.js headers(): { key: \"Permissions-Policy\", value: \"camera=(), microphone=(), geolocation=()\" }"}],"remediation":"Permissions-Policy turns off browser features (camera, microphone, location, payment) the site does not use, so injected or embedded code cannot use them. List only features the site needs with (self)."},{"rule_id":"HDR-010","rule_version":"1.0.0","title":"Technology disclosure","status":"fail","severity":"low","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"x-powered-by: Next.js"}],"reason":"x-powered-by tells attackers which software runs here","fix_hint":"remove X-Powered-By and version numbers from Server and similar headers","platform_fixes":[{"platform":"nextjs","how":"next.config.js: poweredByHeader: false","preferred":true},{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Remove: X-Powered-By"}],"remediation":"Version headers let attackers look up known vulnerabilities for your exact software without probing. Removing them is not a fix for outdated software, but it stops free reconnaissance. Keep the software updated as well."}]}
+{"schema_version":1,"scanner_version":"0.3.0","module":"headers","target":"https://example.com/","rule_packs":[{"id":"opencomply-headers","version":"1.1.0","sha256":"321106287793747f7f1909f0fb58a8f536d0796a7d455e75cb008fcd8f17107c","signed_by":"opencomply-2026"}],"platforms":[{"id":"cloudflare","name":"Cloudflare","layer":"cdn","evidence":{"class":"inferred","source":"GET https://example.com/","detail":"cf-ray: 8f1c2a3b4d5e6f70-BKK"}},{"id":"nextjs","name":"Next.js","layer":"framework","evidence":{"class":"inferred","source":"GET https://example.com/","detail":"x-powered-by: Next.js"}}],"verdict":"fail","grade":{"grade":"D","score":63,"upgrades":[{"to":"C","steps":[{"rule_id":"HDR-002","points":26,"required":true,"impact":"Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes"}],"result":"B","result_score":89},{"to":"A+","steps":[{"rule_id":"HDR-002","points":26,"required":true,"impact":"Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes"},{"rule_id":"HDR-005","points":6,"required":true,"impact":"Features not listed (camera, location, payment) stop working, including in embedded frames"}],"result":"A+","result_score":95}]},"summary":{"pass":6,"fail":3,"unknown":0,"not_applicable":1,"needs_review":0,"insufficient_evidence":0,"advice":1},"findings":[{"rule_id":"HDR-002","rule_version":"1.1.0","title":"Content-Security-Policy","status":"fail","severity":"high","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"content-security-policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; frame-ancestors 'self'"}],"reason":"script-src allows 'unsafe-inline' without a nonce or hash, so injected inline scripts can run","fix_hint":"enforce a CSP whose script-src allows no inline or wildcard scripts","example_fix":"change only script-src: script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com","platform_fixes":[{"platform":"nextjs","how":"middleware (proxy): create a nonce per request, set the CSP header and read it with headers() in the layout","preferred":true},{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Set static: Content-Security-Policy","note":"A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker"}],"remediation":"CSP limits which scripts can run, which reduces what injected code (XSS) can do. Generate a new random nonce per response and put it on every <script>, or use hashes for fixed inline scripts. With nonces, also set base-uri 'self' so an injected <base> tag cannot send the page's own scripts to another site. The example is a starting point, not a drop-in policy: review the whole existing CSP, check third-party scripts and framework hydration, roll out with Content-Security-Policy-Report-Only, fix what it reports, then enforce.","effort":"involved"},{"rule_id":"HDR-005","rule_version":"1.1.0","title":"Permissions-Policy missing","status":"fail","severity":"low","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"(header not present)"}],"reason":"response has no permissions-policy header","fix_hint":"send a Permissions-Policy that turns off features the site does not use","example_fix":"Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()","platform_fixes":[{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Set static: Permissions-Policy"},{"platform":"nextjs","how":"next.config.js headers(): { key: \"Permissions-Policy\", value: \"camera=(), microphone=(), geolocation=()\" }"}],"remediation":"Permissions-Policy turns off browser features (camera, microphone, location, payment) the site does not use, so injected or embedded code cannot use them. List only features the site needs with (self).","effort":"quick","group":"response-headers"},{"rule_id":"HDR-010","rule_version":"1.1.0","title":"Technology disclosure","status":"fail","severity":"low","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"x-powered-by: Next.js"}],"reason":"x-powered-by tells attackers which software runs here","fix_hint":"remove X-Powered-By, version numbers and internal host names from headers and meta generator","platform_fixes":[{"platform":"nextjs","how":"next.config.js: poweredByHeader: false","preferred":true},{"platform":"cloudflare","how":"Rules > Transform Rules > Modify Response Header > Remove: X-Powered-By"}],"remediation":"Version headers let attackers look up known vulnerabilities for your exact software without probing. Removing them is not a fix for outdated software, but it stops free reconnaissance. Keep the software updated as well. The same applies to a <meta name=\"generator\"> tag with a version, and to internal server names in X-Backend-Server or Server-Timing.","effort":"quick"},{"rule_id":"HDR-001","rule_version":"1.1.0","title":"Strict-Transport-Security","status":"pass","severity":"high","evidence":[{"class":"verified","source":"GET https://example.com/","detail":"strict-transport-security: max-age=31536000"}],"example_fix":"Strict-Transport-Security: max-age=31536000; includeSubDomains","advice":"add includeSubDomains once every subdomain serves HTTPS, so subdomains are protected too"}]}
 ```
 
 </details>
@@ -263,6 +277,8 @@ next: fix 3 · evidence: --format markdown
 | `N/A` | `not_applicable` | rule ไม่เกี่ยวข้องกับเป้าหมายนี้ เช่น ไม่มี cookie หรือเป็น JSON API | ไม่นำมาคิดคะแนน |
 
 `verdict` รวมผลเป็นคำเดียว: `fail` (มี FAIL) → `incomplete` (มี UNKNOWN) → `review` (มี REVIEW / NO-EVIDENCE) → `pass`
+
+คำแนะนำเพิ่มเติม (`advice:` · JSON `advice` นับรวมใน `summary.advice`) ไม่ใช่สถานะ แต่เป็นข้อปรับปรุงที่ไม่บังคับซึ่งแนบมากับผล (ส่วนใหญ่เป็น `PASS`) และไม่มีผลต่อ `verdict`, exit code หรือเกรด
 
 ### Exit codes
 
@@ -288,7 +304,7 @@ Exit code 0 ไม่ได้แปลว่าผ่านทุก rule: `rev
 
 ## วิธีคิดคะแนนและเกรด
 
-- **คะแนน (0–100)** = น้ำหนักของ rule ที่ผ่าน ÷ น้ำหนักรวมของ rule ที่เกี่ยวข้อง (`PASS` ได้เต็ม, `REVIEW` ได้ครึ่ง, `N/A` ไม่นำมาคิด) น้ำหนักของแต่ละ rule กำหนดใน rule pack — `REVIEW` ได้ครึ่งเพื่อให้เรื่องที่ยังรอตัดสินใจถูกหักน้อยกว่า FAIL แต่ยัง**ไม่ถือว่าผ่าน**
+- **คะแนน (0–100)** = น้ำหนักของ rule ที่ผ่าน ÷ น้ำหนักรวมของ rule ที่เกี่ยวข้อง (`PASS` ได้เต็ม, `REVIEW` ได้ครึ่ง, `N/A` ไม่นำมาคิด, คำแนะนำเพิ่มเติมไม่นำมาคิด) น้ำหนักของแต่ละ rule กำหนดใน rule pack — `REVIEW` ได้ครึ่งเพื่อให้เรื่องที่ยังรอตัดสินใจถูกหักน้อยกว่า FAIL แต่ยัง**ไม่ถือว่าผ่าน**
 - **เกรดจากคะแนน:** A+ 95–100 · A 90–94 · B 80–89 · C 70–79 · D 50–69 · F 0–49
 - **เพดานเกรด** (คะแนนสูงไม่สามารถชดเชยจุดอ่อนร้ายแรงได้):
 

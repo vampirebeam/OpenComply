@@ -77,6 +77,7 @@ pub const PLATFORMS: &[PlatformDef] = &[
     p("caddy", "Caddy", Layer::Server),
     p("tomcat", "Apache Tomcat", Layer::Server),
     p("jetty", "Eclipse Jetty", Layer::Server),
+    p("trafficserver", "Apache Traffic Server", Layer::Server),
     p("wordpress", "WordPress", Layer::Framework),
     p("joomla", "Joomla", Layer::Framework),
     p("drupal", "Drupal", Layer::Framework),
@@ -179,6 +180,8 @@ const SIGNALS: &[(&str, Signal)] = &[
     ("caddy", ValueIs("server", "caddy")),
     ("tomcat", ValueStarts("server", "apache-coyote")),
     ("jetty", ValueStarts("server", "jetty")),
+    ("trafficserver", ValueStarts("server", "ats/")),
+    ("trafficserver", ValueIs("server", "ats")),
     ("wordpress", ValueContains("link", "api.w.org")),
     ("wordpress", ValueContains("x-pingback", "xmlrpc.php")),
     ("drupal", Present("x-drupal-cache")),
@@ -380,6 +383,57 @@ pub fn detect_from_html(html: &str, source: &str) -> Vec<DetectedPlatform> {
     found.sort_by_key(|d| d.layer);
     found
 }
+/// Content of the page's `<meta name="generator">` (first one, outside scripts; attributes in any order and quoting),
+/// clipped to 120 characters with control characters removed. Same `MAX_HTML_SCAN_BYTES` window as
+/// `detect_from_html`. This is page content, so it is evidence for a check, not a platform guess.
+pub fn meta_generator(html: &str) -> Option<String> {
+    let mut end = html.len().min(MAX_HTML_SCAN_BYTES);
+    while !html.is_char_boundary(end) {
+        end -= 1;
+    }
+    let page = &html[..end];
+    let lower = page.to_ascii_lowercase();
+    for (at, _) in lower.match_indices("<meta") {
+        let before = &lower[..at];
+        if before.rfind("<script") > before.rfind("</script") {
+            continue;
+        }
+        let close = lower[at..].find('>').map_or(lower.len(), |i| at + i);
+        let tag_lower = &lower[at..close];
+        let tag = &page[at..close];
+        if attr(tag_lower, tag_lower, "name").is_some_and(|n| n.trim() == "generator") {
+            let content: String = attr(tag_lower, tag, "content")?
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .take(120)
+                .collect();
+            let content = content.trim().to_string();
+            return (!content.is_empty()).then_some(content);
+        }
+    }
+    None
+}
+
+/// Value of attribute `key` in one tag: `lower` (lowercased copy, same byte offsets) is searched, `tag` is returned.
+fn attr<'a>(lower: &str, tag: &'a str, key: &str) -> Option<&'a str> {
+    let pat = format!("{key}=");
+    let at = lower.match_indices(&pat).find_map(|(i, _)| {
+        lower[..i]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_whitespace())
+            .then_some(i + pat.len())
+    })?;
+    let rest = tag.get(at..)?;
+    match rest.chars().next() {
+        Some(q @ ('"' | '\'')) => rest.get(1..)?.split(q).next(),
+        _ => rest
+            .split(|c: char| c.is_ascii_whitespace())
+            .next()
+            .map(|v| v.trim_end_matches('/')),
+    }
+}
+
 /// CDNs that a hosted platform runs itself: the site owner cannot configure them, so guidance must not send
 /// them there (Shopify and Webflow sites sit behind those companies' Cloudflare, Wix behind Google Cloud,
 /// GitHub Pages behind Fastly).
@@ -506,6 +560,10 @@ mod tests {
 
     /// Header shapes captured from real sites (corpus 2026-10-14), reduced to the fingerprinting headers.
     const CORPUS: &[Case] = &[
+        (
+            &[("server", "ATS/9.2.15"), ("x-cache", "cp1 hit, cp2 miss")],
+            &["trafficserver"],
+        ),
         (
             &[
                 ("server", "Server"),
@@ -646,6 +704,40 @@ mod tests {
         (&[("via", "1.1 vegur")], &["heroku"]),
         (&[("server", "custom")], &[]),
     ];
+
+    #[test]
+    fn meta_generator_reads_only_the_generator_tag() {
+        assert_eq!(
+            meta_generator(r#"<head><meta name="generator" content="WordPress 6.5.2" /></head>"#)
+                .as_deref(),
+            Some("WordPress 6.5.2")
+        );
+        assert_eq!(
+            meta_generator("<META CONTENT='Drupal 10 (https://www.drupal.org)' NAME='Generator'>")
+                .as_deref(),
+            Some("Drupal 10 (https://www.drupal.org)")
+        );
+        assert_eq!(
+            meta_generator("<meta name=generator content=Hugo>").as_deref(),
+            Some("Hugo")
+        );
+        assert_eq!(
+            meta_generator(r#"<script>var t = '<meta name="generator" content="X 1">';</script>"#),
+            None
+        );
+        assert_eq!(
+            meta_generator(r#"<meta name="description" content="a generator 2.0">"#),
+            None
+        );
+        assert_eq!(
+            meta_generator(r#"<meta data-name="generator" content="X 1">"#),
+            None
+        );
+        assert_eq!(
+            meta_generator("<meta name=\"generator\" content=\"A\u{1b}[2J 1\">").as_deref(),
+            Some("A [2J 1")
+        );
+    }
 
     #[test]
     fn corpus_cases() {

@@ -6,12 +6,14 @@
 use std::collections::BTreeMap;
 
 use crate::evaluate::{directive_value, shown, HttpEvidence, InsecureProbe, Outcome};
-use crate::platform::{platforms_named_by, Layer};
+use crate::platform::{platforms_named_by, Layer, PLATFORMS};
 use crate::render::MAX_EXAMPLE_CHARS;
 use crate::rules::{Builtin, LayerHint};
 
 /// 180 days: shorter policies expire between visits of occasional users.
 pub const HSTS_MIN_MAX_AGE: u64 = 15_552_000;
+/// One year: the shortest max-age browsers accept for building HTTPS-only into the browser (preload).
+const HSTS_PRELOAD_MAX_AGE: u64 = 31_536_000;
 
 const NONCE_PLACEHOLDER: &str = "'nonce-<random-per-request>'";
 
@@ -51,7 +53,26 @@ fn hsts(http: &HttpEvidence) -> Outcome {
             detail,
             format!("max-age={n} ({} days) is shorter than 180 days", n / 86_400),
         ),
-        Some(Ok(_)) => Outcome::pass(detail),
+        Some(Ok(n)) => {
+            let sub = directive_value(first, "includesubdomains").is_some();
+            let preload = directive_value(first, "preload").is_some();
+            let (advice, example) = if !sub {
+                (
+                    "add includeSubDomains once every subdomain serves HTTPS, so subdomains are protected too",
+                    format!("Strict-Transport-Security: max-age={n}; includeSubDomains"),
+                )
+            } else if !preload && n >= HSTS_PRELOAD_MAX_AGE {
+                (
+                    "optional: preload lets browsers use HTTPS even on the first visit; it is slow to undo",
+                    format!("Strict-Transport-Security: max-age={n}; includeSubDomains; preload"),
+                )
+            } else {
+                return Outcome::pass(detail);
+            };
+            Outcome::pass(detail)
+                .with_advice(Some(advice.to_string()))
+                .with_example(Some(example))
+        }
     }
 }
 
@@ -232,6 +253,41 @@ fn csp_example(policy: &Policy) -> String {
     out
 }
 
+/// True when the policy lets scripts run because of a nonce or `'strict-dynamic'`, whatever their URL: an injected
+/// `<base>` then moves the page's own relative script URLs to another site. Hashes alone do not (the content must
+/// match), and a host list rejects the other site.
+fn trusts_nonce(policy: &Policy) -> bool {
+    script_sources(policy).is_some_and(|(_, sources)| {
+        sources.iter().any(|s| {
+            s.to_ascii_lowercase().starts_with("'nonce-")
+                || s.eq_ignore_ascii_case("'strict-dynamic'")
+        })
+    })
+}
+
+/// Advice and example for the directives no enforced policy sets: `base-uri` (does not fall back to
+/// `default-src`) and `object-src` (covered by `default-src`). Browsers enforce every policy, so one is enough.
+fn missing_hardening(policies: &[Policy]) -> (Option<String>, Option<String>) {
+    let has = |d: &str| policies.iter().any(|p| p.contains_key(d));
+    let mut add = Vec::new();
+    if !has("base-uri") {
+        add.push("base-uri 'self'");
+    }
+    if !has("object-src") && !has("default-src") {
+        add.push("object-src 'none'");
+    }
+    if add.is_empty() {
+        return (None, None);
+    }
+    (
+        Some(format!(
+            "add {} to close less common injection paths",
+            add.join(" and ")
+        )),
+        Some(format!("add (keep the rest): {}", add.join("; "))),
+    )
+}
+
 fn csp(http: &HttpEvidence) -> Outcome {
     let enforced = http.values("content-security-policy");
     if enforced.is_empty() {
@@ -246,17 +302,34 @@ fn csp(http: &HttpEvidence) -> Outcome {
     }
     let detail = shown("content-security-policy", &enforced);
     let policies = parse_policies(&enforced);
+    let mut strong: Vec<&Policy> = Vec::new();
     let mut review = None;
     let mut weak = None;
     for p in &policies {
         match script_control(p) {
-            ScriptControl::Strong => return Outcome::pass(detail),
+            ScriptControl::Strong => strong.push(p),
             ScriptControl::Review(r) => review = review.or(Some(r)),
             ScriptControl::Weak(r) => weak = weak.or(Some((r, p))),
         }
     }
+    let (add_advice, add_example) = missing_hardening(&policies);
+    if !strong.is_empty() {
+        let base_missing = !policies.iter().any(|p| p.contains_key("base-uri"));
+        if base_missing && strong.iter().all(|p| trusts_nonce(p)) {
+            return Outcome::review(
+                detail,
+                "CSP trusts nonces but has no base-uri, so an injected <base> tag can redirect its scripts"
+                    .into(),
+            )
+            .with_question("Does any page need a <base> tag to another site? If not, add base-uri 'self'.")
+            .with_example(add_example);
+        }
+        return Outcome::pass(detail)
+            .with_advice(add_advice)
+            .with_example(add_example);
+    }
     if let Some(r) = review {
-        return Outcome::review(detail, r);
+        return Outcome::review(detail, r).with_advice(add_advice);
     }
     match weak {
         Some((r, p)) => Outcome::fail(detail, r).with_example(Some(csp_example(p))),
@@ -306,19 +379,30 @@ fn referrer_policy(http: &HttpEvidence) -> Outcome {
     }
 }
 
+/// Browsers enforce every CSP policy, so one `frame-ancestors` without a wildcard is enough to pass; it fails only
+/// when every policy that sets it allows any site. X-Frame-Options is used only when no policy sets it.
 fn clickjacking(http: &HttpEvidence) -> Outcome {
     let csp = http.values("content-security-policy");
-    for p in parse_policies(&csp) {
-        if let Some(fa) = p.get("frame-ancestors") {
-            let detail = format!("frame-ancestors {}", fa.join(" "));
-            return match fa.iter().find(|s| is_wildcard_source(s)) {
-                Some(w) => Outcome::fail(
-                    detail,
-                    format!("frame-ancestors allows {w}, so any site can frame this page"),
-                ),
-                None => Outcome::pass(detail),
-            };
-        }
+    let policies = parse_policies(&csp);
+    let ancestors: Vec<&Vec<String>> = policies
+        .iter()
+        .filter_map(|p| p.get("frame-ancestors"))
+        .collect();
+    if let Some(strict) = ancestors
+        .iter()
+        .find(|fa| !fa.iter().any(|s| is_wildcard_source(s)))
+    {
+        return Outcome::pass(format!("frame-ancestors {}", strict.join(" ")));
+    }
+    if let Some(fa) = ancestors.first() {
+        let w = fa
+            .iter()
+            .find(|s| is_wildcard_source(s))
+            .map_or("*", String::as_str);
+        return Outcome::fail(
+            format!("frame-ancestors {}", fa.join(" ")),
+            format!("frame-ancestors allows {w}, so any site can frame this page"),
+        );
     }
     let xfo = http.values("x-frame-options");
     if xfo.is_empty() {
@@ -418,12 +502,50 @@ const SECURITY_HEADERS: [&str; 6] = [
     "permissions-policy",
 ];
 
+/// Headers current browsers no longer use. `X-XSS-Protection: 0` is the recommended way to switch the old filter off,
+/// so only other values are flagged.
+const DEPRECATED_HEADERS: [&str; 5] = [
+    "x-xss-protection",
+    "expect-ct",
+    "feature-policy",
+    "public-key-pins",
+    "public-key-pins-report-only",
+];
+
+/// Deprecated headers on this response, as advice (they change nothing in current browsers).
+fn deprecated_advice(http: &HttpEvidence) -> Option<String> {
+    let found: Vec<&str> = DEPRECATED_HEADERS
+        .iter()
+        .copied()
+        .filter(|h| {
+            let v = http.values(h);
+            let off = *h == "x-xss-protection" && v.iter().all(|x| x.starts_with('0'));
+            !v.is_empty() && !off
+        })
+        .collect();
+    if found.is_empty() {
+        return None;
+    }
+    let xss = if found.contains(&"x-xss-protection") {
+        " (or send X-XSS-Protection: 0)"
+    } else {
+        ""
+    };
+    Some(format!(
+        "remove {}: current browsers ignore {}{xss}",
+        found.join(", "),
+        if found.len() == 1 { "it" } else { "them" }
+    ))
+}
+
 fn header_syntax(http: &HttpEvidence) -> Outcome {
     let present: Vec<&str> = SECURITY_HEADERS
         .iter()
+        .chain(DEPRECATED_HEADERS.iter())
         .copied()
         .filter(|h| !http.values(h).is_empty())
         .collect();
+    let advice = deprecated_advice(http);
     if present.is_empty() {
         return Outcome::not_applicable(
             "(no security headers)".into(),
@@ -490,6 +612,7 @@ fn header_syntax(http: &HttpEvidence) -> Outcome {
             format!("{first} (+{} more: {})", rest.len(), rest.join("; ")),
         ),
     }
+    .with_advice(advice)
 }
 
 struct Cookie {
@@ -685,6 +808,67 @@ fn cookie_guidance(
     }
 }
 
+/// A session-style cookie (`HttpOnly`, set by the site itself on this page) on a response that `Cache-Control` lets a
+/// shared cache store (`public` / `s-maxage`, without `private` / `no-store`): one visitor's cookie could be served to
+/// others. Always REVIEW: whether a cache keeps a Set-Cookie response is up to that cache, and even a cache HIT
+/// (`Age` > 0, a cache status of HIT) does not prove it — edges often add their own cookie after the lookup (seen live
+/// on a large CDN-fronted site). A HIT is named in the reason because it makes the question more pressing.
+fn cached_session_cookies(
+    http: &HttpEvidence,
+    cookies: &[Cookie],
+    detail: &str,
+) -> Option<Outcome> {
+    let cc = http.values("cache-control").join(", ").to_ascii_lowercase();
+    let directives: Vec<&str> = cc.split(',').map(str::trim).collect();
+    let shared = directives
+        .iter()
+        .any(|d| *d == "public" || d.starts_with("s-maxage"));
+    let personal = directives
+        .iter()
+        .any(|d| d.starts_with("private") || *d == "no-store");
+    if !shared || personal {
+        return None;
+    }
+    let pred = |c: &Cookie| c.http_only && !c.on_redirect && infra_platform(&c.name).is_none();
+    let names = flagged_names(cookies, &pred);
+    if names.is_empty() {
+        return None;
+    }
+    let hit = http
+        .values("age")
+        .iter()
+        .any(|a| a.parse::<u64>().is_ok_and(|n| n > 0))
+        || http
+            .values("cf-cache-status")
+            .iter()
+            .any(|v| v.eq_ignore_ascii_case("hit"))
+        || http
+            .values("x-cache")
+            .iter()
+            .any(|v| v.to_ascii_lowercase().contains("hit"));
+    let who = short_list(&names);
+    let detail = format!(
+        "{detail}; cache-control: {}",
+        http.values("cache-control").join(", ")
+    );
+    let layers = LayerHint {
+        prefer: vec![Layer::Framework],
+        ..LayerHint::default()
+    };
+    let reason = if hit {
+        format!("{who} on a cached (HIT) response may reach other visitors")
+    } else {
+        format!("{who} on a publicly cacheable response may reach other visitors")
+    };
+    Some(
+        Outcome::review(detail, reason)
+            .with_question(
+                "Is this response ever cached for other visitors? If so, send Cache-Control: private.",
+            )
+            .with_layers(layers),
+    )
+}
+
 fn cookies(http: &HttpEvidence) -> Outcome {
     let mut cookies: Vec<Cookie> = http
         .values("set-cookie")
@@ -728,6 +912,9 @@ fn cookies(http: &HttpEvidence) -> Outcome {
         )
         .with_layers(hint);
     }
+    if let Some(outcome) = cached_session_cookies(http, &cookies, &detail) {
+        return outcome;
+    }
     let readable_pred = |c: &Cookie| {
         !c.http_only && !SCRIPT_READABLE_COOKIES.contains(&c.name.to_ascii_lowercase().as_str())
     };
@@ -744,13 +931,60 @@ fn cookies(http: &HttpEvidence) -> Outcome {
     Outcome::pass(detail)
 }
 
-const TECH_HEADERS: [&str; 5] = [
+const TECH_HEADERS: [&str; 6] = [
     "x-powered-by",
     "x-aspnet-version",
     "x-aspnetmvc-version",
     "x-generator",
     "x-runtime",
+    "x-backend-server",
 ];
+
+/// Last labels that only appear on private networks.
+const INTERNAL_SUFFIXES: [&str; 9] = [
+    "internal",
+    "local",
+    "localdomain",
+    "lan",
+    "intra",
+    "corp",
+    "private",
+    "svc",
+    "cluster",
+];
+
+/// Host names or IPv4 addresses inside a `Server-Timing` value. Strict, so CDN metrics (`cfL4;desc="?proto=TCP…"`,
+/// `cache;desc=hit`, `dur=1.5`) never match: an IPv4 address, a name ending in a private-network label, or a name with
+/// at least three labels.
+fn timing_hosts(value: &str) -> Vec<String> {
+    let mut hosts = Vec::new();
+    for token in value.split(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-')) {
+        let token = token.trim_matches('.');
+        let labels: Vec<&str> = token.split('.').collect();
+        if labels.len() < 2 || labels.iter().any(|l| l.is_empty()) {
+            continue;
+        }
+        let ipv4 = labels.len() == 4 && labels.iter().all(|l| l.parse::<u8>().is_ok());
+        let last = labels
+            .last()
+            .map_or(String::new(), |l| l.to_ascii_lowercase());
+        let named = last.bytes().any(|b| b.is_ascii_alphabetic())
+            && (labels.len() >= 3 || INTERNAL_SUFFIXES.contains(&last.as_str()));
+        if (ipv4 || named) && !hosts.iter().any(|h: &String| h == token) {
+            hosts.push(token.chars().take(60).collect());
+        }
+    }
+    hosts
+}
+
+/// Platform a `<meta name="generator">` names (`WordPress 6.5` → wordpress): the software that writes the tag.
+fn generator_platform(content: &str) -> Option<&'static str> {
+    let lower = content.trim().to_ascii_lowercase();
+    PLATFORMS
+        .iter()
+        .find(|p| lower.starts_with(p.id))
+        .map(|p| p.id)
+}
 
 fn has_version(server: &str) -> bool {
     server
@@ -759,12 +993,66 @@ fn has_version(server: &str) -> bool {
         .any(|rest| rest.trim_start().starts_with(|c: char| c.is_ascii_digit()))
 }
 
+/// True when the value carries a version: a word that starts with a digit (`6.5.2`, `11`, `PHP/8.1` → `8.1`,
+/// `tool-0.0.65` → `0.0.65`) or with `v` and a digit. A digit inside a product name (`TYPO3 CMS`) is not a version.
+fn has_version_token(value: &str) -> bool {
+    value
+        .split(|c: char| c.is_whitespace() || matches!(c, '/' | '(' | ')' | ';' | ',' | '_' | '-'))
+        .any(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(d) if d.is_ascii_digit() => true,
+                Some('v' | 'V') => c.next().is_some_and(|d| d.is_ascii_digit()),
+                _ => false,
+            }
+        })
+}
+
 /// A value blanked out by a load balancer or proxy (`XXXXXXXX`, `****`): the header is still sent but names nothing.
 fn is_masked(value: &str) -> bool {
     value
         .trim()
         .chars()
         .all(|c| matches!(c, 'X' | 'x' | '*' | '#' | '-' | ' '))
+}
+
+/// The software that emits each leaked value (`ARR/3.0` → IIS, `WordPress 6.5` → wordpress), in order, once each.
+fn leak_sources(leaks: &[(&str, &str)]) -> Vec<&'static str> {
+    let mut sources: Vec<&'static str> = Vec::new();
+    for (h, v) in leaks {
+        let ids = if *h == "meta generator" {
+            generator_platform(v).into_iter().collect()
+        } else {
+            platforms_named_by(h, v)
+        };
+        for id in ids {
+            if !sources.contains(&id) {
+                sources.push(id);
+            }
+        }
+    }
+    sources
+}
+
+/// REVIEW when `Server-Timing` carries what looks like an internal host name (see `timing_hosts`).
+fn timing_review(http: &HttpEvidence) -> Option<Outcome> {
+    let timing = http.values("server-timing");
+    let hosts: Vec<String> = timing.iter().flat_map(|v| timing_hosts(v)).collect();
+    let host = hosts.first()?;
+    Some(
+        Outcome::review(
+            shown("server-timing", &timing),
+            format!("server-timing names {host}, which may be an internal server"),
+        )
+        .with_question(
+            "Is this an internal host or server name? If so, remove it from Server-Timing.",
+        )
+        .with_layers(LayerHint {
+            prefer: vec![Layer::Framework],
+            skip: vec![Layer::Frontend],
+            ..LayerHint::default()
+        }),
+    )
 }
 
 fn info_disclosure(http: &HttpEvidence) -> Outcome {
@@ -786,7 +1074,17 @@ fn info_disclosure(http: &HttpEvidence) -> Outcome {
             }
         }
     }
+    let generator = http
+        .html_generator
+        .as_deref()
+        .filter(|g| has_version_token(g));
+    if let Some(g) = generator {
+        leaks.push(("meta generator", g));
+    }
     if leaks.is_empty() {
+        if let Some(review) = timing_review(http) {
+            return review;
+        }
         return Outcome::pass(if masked.is_empty() {
             "no version or technology headers".into()
         } else {
@@ -807,14 +1105,7 @@ fn info_disclosure(http: &HttpEvidence) -> Outcome {
     // Each leaked value that names its software (`ARR/3.0` → IIS) points at a place that must be fixed too.
     let server_leak = names.contains(&"server");
     let app_leak = names.iter().any(|n| *n != "server");
-    let mut sources: Vec<&'static str> = Vec::new();
-    for (h, v) in &leaks {
-        for id in platforms_named_by(h, v) {
-            if !sources.contains(&id) {
-                sources.push(id);
-            }
-        }
-    }
+    let sources = leak_sources(&leaks);
     let layers = match (server_leak, app_leak) {
         (true, false) => LayerHint {
             prefer: vec![Layer::Server, Layer::Host],
@@ -835,25 +1126,25 @@ fn info_disclosure(http: &HttpEvidence) -> Outcome {
             sources,
         },
     };
-    let leaks: Vec<String> = leaks.iter().map(|(h, v)| format!("{h}: {v}")).collect();
-    // Say "version" only when a value carries one: `x-powered-by: Next.js` names the software, nothing more.
-    let what = if leaks.iter().any(|l| {
-        l.split_once(':')
-            .is_some_and(|(_, v)| v.bytes().any(|b| b.is_ascii_digit()))
-    }) {
-        "which software and version runs here"
+    let versioned = leaks
+        .iter()
+        .any(|(h, v)| *h != "x-backend-server" && has_version_token(v));
+    let shown_leaks: Vec<String> = leaks.iter().map(|(h, v)| format!("{h}: {v}")).collect();
+    let reason = if names == ["x-backend-server"] {
+        "x-backend-server reveals the name of an internal server".to_string()
     } else {
-        "which software runs here"
-    };
-    Outcome::fail(
-        leaks.join("; "),
+        let what = if versioned {
+            "which software and version runs here"
+        } else {
+            "which software runs here"
+        };
         format!(
             "{} {} attackers {what}",
             short_list(&names),
             if names.len() == 1 { "tells" } else { "tell" }
-        ),
-    )
-    .with_layers(layers)
+        )
+    };
+    Outcome::fail(shown_leaks.join("; "), reason).with_layers(layers)
 }
 
 #[cfg(test)]
@@ -873,6 +1164,7 @@ mod tests {
             https: true,
             insecure_probe: None,
             redirect_cookies: vec![],
+            html_generator: None,
         }
     }
 
@@ -909,16 +1201,17 @@ mod tests {
         assert_eq!(hsts(&plain).status, Status::Fail);
     }
 
+    /// Script strength only; `base-uri` is set where a nonce is trusted (that case is covered on its own below).
     #[test]
     fn csp_strength() {
         let st = |v: &str| csp(&ev(&[("Content-Security-Policy", v)])).status;
         assert_eq!(st("default-src 'self'"), Status::Pass);
         assert_eq!(
-            st("script-src 'self' 'nonce-abc' 'unsafe-inline'"),
+            st("script-src 'self' 'nonce-abc' 'unsafe-inline'; base-uri 'self'"),
             Status::Pass
         );
         assert_eq!(
-            st("script-src 'nonce-abc' 'strict-dynamic' https:"),
+            st("script-src 'nonce-abc' 'strict-dynamic' https:; base-uri 'none'"),
             Status::Pass
         );
         assert_eq!(st("script-src 'self' 'unsafe-inline'"), Status::Fail);
@@ -992,12 +1285,15 @@ mod tests {
         );
         // Strong everywhere: nonce makes 'unsafe-inline' ignored, and handlers fall back to that script-src.
         assert_eq!(
-            st(&format!("script-src 'self' {n} 'unsafe-inline'")).status,
+            st(&format!(
+                "script-src 'self' {n} 'unsafe-inline'; base-uri 'self'"
+            ))
+            .status,
             Status::Pass
         );
         assert_eq!(
             st(&format!(
-                "script-src {n} 'strict-dynamic'; script-src-attr 'none'"
+                "script-src {n} 'strict-dynamic'; script-src-attr 'none'; base-uri 'self'"
             ))
             .status,
             Status::Pass
@@ -1012,11 +1308,339 @@ mod tests {
         // Two policies: the stricter one blocks, as browsers enforce both.
         assert_eq!(
             st(&format!(
-                "script-src 'unsafe-inline', script-src 'self' {n}"
+                "script-src 'unsafe-inline', script-src 'self' {n}; base-uri 'self'"
             ))
             .status,
             Status::Pass
         );
+    }
+
+    /// A nonce trusts any URL, so an injected `<base>` can move the page's own scripts to another site: REVIEW when no
+    /// policy sets `base-uri`. Hashes and host lists are not open to that, so a missing `base-uri` is only advice.
+    #[test]
+    fn csp_base_uri_by_risk() {
+        let st = |p: &[&str]| {
+            let headers: Vec<(&str, &str)> =
+                p.iter().map(|v| ("Content-Security-Policy", *v)).collect();
+            csp(&ev(&headers))
+        };
+        let nonce = st(&["script-src 'self' 'nonce-abc'"]);
+        assert_eq!(nonce.status, Status::NeedsReview);
+        assert_eq!(
+            nonce.reason.as_deref(),
+            Some("CSP trusts nonces but has no base-uri, so an injected <base> tag can redirect its scripts")
+        );
+        assert_eq!(
+            nonce.question.as_deref(),
+            Some("Does any page need a <base> tag to another site? If not, add base-uri 'self'.")
+        );
+        assert_eq!(
+            nonce.example.as_deref(),
+            Some("add (keep the rest): base-uri 'self'; object-src 'none'")
+        );
+        let dynamic = st(&["default-src 'self'; script-src 'strict-dynamic' 'sha256-abc'"]);
+        assert_eq!(dynamic.status, Status::NeedsReview);
+        assert_eq!(
+            dynamic.example.as_deref(),
+            Some("add (keep the rest): base-uri 'self'")
+        );
+        let closed = st(&["script-src 'self' 'nonce-abc'; base-uri 'self'; object-src 'none'"]);
+        assert_eq!((closed.status, closed.advice), (Status::Pass, None));
+        let other_policy = st(&["script-src 'self' 'nonce-abc'", "base-uri 'none'"]);
+        assert_eq!(other_policy.status, Status::Pass);
+        assert_eq!(
+            other_policy.advice.as_deref(),
+            Some("add object-src 'none' to close less common injection paths")
+        );
+        for (policies, why) in [
+            (&["default-src 'self'"][..], "host list"),
+            (
+                &["script-src 'sha256-abc'; object-src 'none'"][..],
+                "hash only",
+            ),
+            (
+                &["script-src 'nonce-abc'", "script-src 'self'"][..],
+                "a host-list policy also applies",
+            ),
+        ] {
+            let o = st(policies);
+            assert_eq!(o.status, Status::Pass, "{why}");
+            assert!(
+                o.advice
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("base-uri 'self'"),
+                "{why}: {:?}",
+                o.advice
+            );
+            assert!(o.question.is_none(), "{why}");
+        }
+        let eval = st(&["script-src 'self' 'unsafe-eval'"]);
+        assert_eq!(eval.status, Status::NeedsReview);
+        assert_eq!(
+            eval.reason.as_deref(),
+            Some("script-src allows 'unsafe-eval'")
+        );
+        assert_eq!(
+            eval.advice.as_deref(),
+            Some("add base-uri 'self' and object-src 'none' to close less common injection paths")
+        );
+    }
+
+    #[test]
+    fn hsts_advice_never_changes_the_status() {
+        let h = |v: &str| hsts(&ev(&[("Strict-Transport-Security", v)]));
+        let no_sub = h("max-age=31536000");
+        assert_eq!(no_sub.status, Status::Pass);
+        assert_eq!(
+            no_sub.advice.as_deref(),
+            Some("add includeSubDomains once every subdomain serves HTTPS, so subdomains are protected too")
+        );
+        assert_eq!(
+            no_sub.example.as_deref(),
+            Some("Strict-Transport-Security: max-age=31536000; includeSubDomains")
+        );
+        let no_preload = h("max-age=63072000; includeSubDomains");
+        assert_eq!(no_preload.status, Status::Pass);
+        assert!(no_preload
+            .advice
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("optional: preload"));
+        assert_eq!(
+            no_preload.example.as_deref(),
+            Some("Strict-Transport-Security: max-age=63072000; includeSubDomains; preload")
+        );
+        assert_eq!(h("max-age=15552000; includeSubDomains").advice, None);
+        assert_eq!(
+            h("max-age=31536000; includeSubDomains; preload").advice,
+            None
+        );
+        let short = h("max-age=86400");
+        assert_eq!((short.status, short.advice), (Status::Fail, None));
+    }
+
+    /// Browsers enforce every CSP policy: one restrictive `frame-ancestors` is enough.
+    #[test]
+    fn clickjacking_reads_every_policy() {
+        let c = |p: &[&str]| {
+            let headers: Vec<(&str, &str)> =
+                p.iter().map(|v| ("Content-Security-Policy", *v)).collect();
+            clickjacking(&ev(&headers))
+        };
+        let both = c(&["frame-ancestors *", "frame-ancestors 'none'"]);
+        assert_eq!(both.status, Status::Pass);
+        assert_eq!(both.detail, "frame-ancestors 'none'");
+        assert_eq!(c(&["frame-ancestors 'none'"]).status, Status::Pass);
+        assert_eq!(c(&["frame-ancestors *"]).status, Status::Fail);
+        let open = c(&["frame-ancestors https:", "frame-ancestors *"]);
+        assert_eq!(open.status, Status::Fail);
+        assert_eq!(
+            open.reason.as_deref(),
+            Some("frame-ancestors allows https:, so any site can frame this page")
+        );
+    }
+
+    #[test]
+    fn deprecated_headers_are_advice() {
+        let x = header_syntax(&ev(&[
+            ("X-Content-Type-Options", "nosniff"),
+            ("X-XSS-Protection", "1; mode=block"),
+        ]));
+        assert_eq!(x.status, Status::Pass);
+        assert_eq!(
+            x.advice.as_deref(),
+            Some(
+                "remove x-xss-protection: current browsers ignore it (or send X-XSS-Protection: 0)"
+            )
+        );
+        let off = header_syntax(&ev(&[("X-XSS-Protection", "0")]));
+        assert_eq!((off.status, off.advice), (Status::Pass, None));
+        let only = header_syntax(&ev(&[("Expect-CT", "max-age=0")]));
+        assert_eq!(only.status, Status::Pass);
+        assert_eq!(
+            only.advice.as_deref(),
+            Some("remove expect-ct: current browsers ignore it")
+        );
+        let two = header_syntax(&ev(&[
+            ("Feature-Policy", "camera 'none'"),
+            ("Public-Key-Pins", "pin-sha256=\"x\"; max-age=1"),
+        ]));
+        assert_eq!(
+            two.advice.as_deref(),
+            Some("remove feature-policy, public-key-pins: current browsers ignore them")
+        );
+        let dup = header_syntax(&ev(&[
+            ("X-Frame-Options", "DENY"),
+            ("X-Frame-Options", "SAMEORIGIN"),
+            ("Expect-CT", "max-age=0"),
+        ]));
+        assert_eq!(dup.status, Status::Fail);
+        assert!(dup.advice.is_some());
+        assert_eq!(header_syntax(&ev(&[])).status, Status::NotApplicable);
+    }
+
+    #[test]
+    fn session_cookie_on_a_shared_cacheable_response() {
+        let c = |extra: &[(&str, &str)]| {
+            let mut h = vec![("Set-Cookie", "sid=1; Secure; HttpOnly; SameSite=Lax")];
+            h.extend_from_slice(extra);
+            cookies(&ev(&h))
+        };
+        let review = c(&[("Cache-Control", "public, s-maxage=86400")]);
+        assert_eq!(review.status, Status::NeedsReview);
+        assert_eq!(
+            review.reason.as_deref(),
+            Some("sid on a publicly cacheable response may reach other visitors")
+        );
+        assert_eq!(
+            review.question.as_deref(),
+            Some("Is this response ever cached for other visitors? If so, send Cache-Control: private.")
+        );
+        assert!(review
+            .detail
+            .contains("cache-control: public, s-maxage=86400"));
+        assert!(!review.detail.contains("sid=1"));
+        for hit in [
+            ("Age", "120"),
+            ("cf-cache-status", "HIT"),
+            ("X-Cache", "Hit from cloudfront"),
+        ] {
+            let o = c(&[("Cache-Control", "public, max-age=600"), hit]);
+            assert_eq!(o.status, Status::NeedsReview, "{hit:?}");
+            assert_eq!(
+                o.reason.as_deref(),
+                Some("sid on a cached (HIT) response may reach other visitors")
+            );
+        }
+        let long = cookies(&ev(&[
+            ("Set-Cookie", "app_session=1; Secure; HttpOnly"),
+            (
+                "Set-Cookie",
+                "Xy7rQ2mN8pL4kV9sT1wZ3bC6dF0gH5jK=1; Secure; HttpOnly",
+            ),
+            (
+                "Set-Cookie",
+                "third_session_cookie_name=1; Secure; HttpOnly",
+            ),
+            ("Cache-Control", "public, s-maxage=86400"),
+            ("Age", "3"),
+        ]));
+        assert!(
+            long.reason.as_deref().unwrap_or("").chars().count() <= 100,
+            "{:?}",
+            long.reason
+        );
+        for cc in [
+            "private, max-age=0",
+            "public, no-store",
+            "max-age=600",
+            "no-cache",
+        ] {
+            assert_eq!(c(&[("Cache-Control", cc)]).status, Status::Pass, "{cc}");
+        }
+        assert_eq!(
+            c(&[("Cache-Control", "public"), ("Age", "0")]).status,
+            Status::NeedsReview
+        );
+        let infra = cookies(&ev(&[
+            ("Set-Cookie", "__cf_bm=x; Secure; HttpOnly; SameSite=None"),
+            ("Cache-Control", "public, max-age=600"),
+        ]));
+        assert_eq!(infra.status, Status::Pass);
+        let insecure = cookies(&ev(&[
+            ("Set-Cookie", "sid=1; HttpOnly"),
+            ("Cache-Control", "public"),
+        ]));
+        assert_eq!(insecure.status, Status::Fail);
+        assert!(insecure
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("Secure missing"));
+        let mut hop = ev(&[("Cache-Control", "public")]);
+        hop.redirect_cookies = vec!["sid=1; Secure; HttpOnly".into()];
+        assert_eq!(cookies(&hop).status, Status::Pass);
+    }
+
+    #[test]
+    fn disclosure_reads_meta_generator_backend_and_server_timing() {
+        let with_gen = |g: &str| {
+            let mut e = ev(&[]);
+            e.html_generator = Some(g.into());
+            info_disclosure(&e)
+        };
+        let wp = with_gen("WordPress 6.5.2");
+        assert_eq!(wp.status, Status::Fail);
+        assert_eq!(wp.detail, "meta generator: WordPress 6.5.2");
+        assert_eq!(
+            wp.reason.as_deref(),
+            Some("meta generator tells attackers which software and version runs here")
+        );
+        assert_eq!(wp.layers.map(|l| l.sources), Some(vec!["wordpress"]));
+        assert_eq!(with_gen("WordPress").status, Status::Pass);
+        assert_eq!(with_gen("TYPO3 CMS").status, Status::Pass);
+        assert_eq!(
+            with_gen("Drupal 11 (https://www.drupal.org)").status,
+            Status::Fail
+        );
+        assert_eq!(with_gen("WordPress 7.2-alpha-64347").status, Status::Fail);
+        assert_eq!(with_gen("Hugo v0.120.4").status, Status::Fail);
+        assert_eq!(with_gen("sitegen-0.0.65").status, Status::Fail);
+        assert_eq!(
+            info_disclosure(&ev(&[("X-Powered-By", "TYPO3")]))
+                .reason
+                .as_deref(),
+            Some("x-powered-by tells attackers which software runs here")
+        );
+        let backend = info_disclosure(&ev(&[("X-Backend-Server", "web-03")]));
+        assert_eq!(backend.status, Status::Fail);
+        assert_eq!(
+            backend.reason.as_deref(),
+            Some("x-backend-server reveals the name of an internal server")
+        );
+        assert_eq!(
+            info_disclosure(&ev(&[("X-Backend-Server", "XXXXXX")])).status,
+            Status::Pass
+        );
+        for benign in [
+            "cfL4;desc=\"?proto=TCP&rtt=1234&min_rtt=1000&rtt_var=50\"",
+            "cdn-cache;desc=HIT, edge;dur=1.5",
+            "chlray;desc=\"0123456789abcdef\"",
+            "cache;desc=cache.hit",
+            "app;dur=12.25",
+        ] {
+            assert_eq!(
+                info_disclosure(&ev(&[("Server-Timing", benign)])).status,
+                Status::Pass,
+                "{benign}"
+            );
+        }
+        let internal = info_disclosure(&ev(&[(
+            "Server-Timing",
+            "origin;desc=\"web-03.prod.internal\";dur=20",
+        )]));
+        assert_eq!(internal.status, Status::NeedsReview);
+        assert_eq!(
+            internal.reason.as_deref(),
+            Some("server-timing names web-03.prod.internal, which may be an internal server")
+        );
+        assert_eq!(
+            internal.question.as_deref(),
+            Some("Is this an internal host or server name? If so, remove it from Server-Timing.")
+        );
+        assert_eq!(
+            info_disclosure(&ev(&[("Server-Timing", "db;desc=10.0.3.7")])).status,
+            Status::NeedsReview
+        );
+        let both = info_disclosure(&ev(&[
+            ("X-Powered-By", "PHP/8.2.1"),
+            ("Server-Timing", "origin;desc=\"web-03.prod.internal\""),
+        ]));
+        assert_eq!(both.status, Status::Fail);
+        for cdn in [("Via", "1.1 varnish"), ("X-Served-By", "cache-xyz1234-ABC")] {
+            assert_eq!(info_disclosure(&ev(&[cdn])).status, Status::Pass, "{cdn:?}");
+        }
     }
 
     #[test]

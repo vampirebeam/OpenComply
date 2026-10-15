@@ -10,8 +10,8 @@ use opencomply_core::rules::{LoadError, RulePack, MAX_PACK_BYTES};
 use opencomply_core::schema;
 use opencomply_core::signing::{TrustedKey, MAX_SIGNATURE_FILE_BYTES};
 use opencomply_core::{
-    render, Assessment, Error, ExitCode, FailOn, Format, Limits, Module, Report, RuleRegistry,
-    Target, REPORT_SCHEMA_VERSION, SCANNER_VERSION, STANDARDS,
+    render_with, Assessment, Error, ExitCode, FailOn, Format, Limits, Module, RenderOptions,
+    Report, RuleRegistry, Target, REPORT_SCHEMA_VERSION, SCANNER_VERSION, STANDARDS,
 };
 use opencomply_http::NetPolicy;
 
@@ -38,6 +38,9 @@ enum Command {
         /// Include passing and not-applicable findings
         #[arg(long, global = true)]
         all: bool,
+        /// With --format json: leave out the long guidance text and the evidence of passed checks
+        #[arg(long, global = true)]
+        compact: bool,
         /// Exit non-zero on `fail` (default), or also on undecided `review` items
         #[arg(long, value_enum, default_value_t = FailOnArg::Fail, global = true)]
         fail_on: FailOnArg,
@@ -248,10 +251,15 @@ fn main() -> std::process::ExitCode {
             module,
             format,
             all,
+            compact,
             fail_on,
             allow_private,
         } => {
             let (module, target) = module.into_parts();
+            if compact && !matches!(format, OutputFormat::Json) {
+                eprintln!("opencomply: --compact needs --format json");
+                return std::process::ExitCode::from(ExitCode::Usage as u8);
+            }
             match run_scan(
                 module,
                 &target,
@@ -259,7 +267,7 @@ fn main() -> std::process::ExitCode {
                 NetPolicy { allow_private },
             ) {
                 Ok(report) => {
-                    let out = render(&report, format.into(), all);
+                    let out = render_with(&report, format.into(), RenderOptions { all, compact });
                     let mut stdout = std::io::stdout().lock();
                     if stdout.write_all(out.as_bytes()).is_err() {
                         ExitCode::Error

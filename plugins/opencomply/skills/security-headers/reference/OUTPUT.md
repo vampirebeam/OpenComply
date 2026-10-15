@@ -7,8 +7,8 @@ headers https://example.com/ verdict=fail grade=D score=63 pass=6 fail=3 … pla
 to C: HDR-002 +26 required → B 89
 to A+: HDR-002 +26 required · HDR-005 +6 required → A+ 95
   impact (HDR-002): Nonces need each response rendered per request …
-FAIL HDR-002 high Content-Security-Policy
-  why: script-src allows 'unsafe-inline', so an injected <script> still runs
+FAIL HDR-002 high Content-Security-Policy · involved
+  why: script-src allows 'unsafe-inline' without a nonce or hash, so injected inline scripts can run
   fix: enforce a CSP whose script-src allows no inline or wildcard scripts
   example: change only script-src: script-src 'self' 'nonce-<random-per-request>' https://www.googletagmanager.com
   how (nextjs, preferred): middleware (proxy): create a nonce per request …
@@ -19,18 +19,21 @@ next: fix 3 · evidence: --format markdown
 
 | Line | Meaning |
 |---|---|
-| first line | module, target, `verdict`, grade and score, count per status, detected platforms |
+| first line | module, target, `verdict`, grade and score, count per status, `advice=N` when there is advice, detected platforms |
 | `grade capped:` | why the grade is lower than the score alone would give |
 | `to X: … → Y n` | fixes needed to reach grade X, points each adds, `required` = cannot be skipped; `→` the actual result after them (can exceed X) |
 | `impact (ID):` | what passing that rule changes or costs; `impact of …: --all` = more impact lines with `--all` |
-| `FAIL` / `REVIEW` / `UNKNOWN` | status, rule ID, severity, finding |
+| `FAIL` / `REVIEW` / `UNKNOWN` | status, rule ID, severity, finding, then the usual effort: `quick` · `moderate` · `involved` |
+| `after:` | fix these rules first (e.g. HSTS after the http:// redirect); the list is already in that order |
 | `why:` | the observed problem |
 | `fix:` | the action |
 | `example:` | a starting point built from the site's own values — adapt it, replace `<...>` |
 | `how (platform)` | where to fix it on that platform; `preferred` = fix it here rather than at the other listed place |
 | `note (platform)` | a caveat for that platform |
 | `decide:` | the question the user must answer (REVIEW / UNKNOWN only) |
-| `next:` | what remains |
+| `PASS` + `advice:` | already passed; an optional improvement (with its own `example:`) — never changes verdict or grade |
+| `together (group):` | rules set in the same place, so one change covers them |
+| `next:` | what remains, plus how many optional advice items |
 
 ## Statuses
 
@@ -43,6 +46,7 @@ next: fix 3 · evidence: --format markdown
 | N/A | rule does not apply (no cookies, a JSON API) | excluded from the score |
 
 `verdict`: `fail` (any FAIL) → `incomplete` (any UNKNOWN) → `review` (any REVIEW) → `pass`.
+Advice is not a status: it sits on a result (usually PASS) and is optional.
 
 ## Grade
 
@@ -56,22 +60,25 @@ next: fix 3 · evidence: --format markdown
 
 | ID | Checks |
 |---|---|
-| HDR-001 | Strict-Transport-Security (max-age ≥ 180 days, served over HTTPS) |
-| HDR-002 | Content-Security-Policy enforced, no inline / wildcard scripts |
+| HDR-001 | Strict-Transport-Security (max-age ≥ 180 days, served over HTTPS); advice: includeSubDomains, then preload |
+| HDR-002 | Content-Security-Policy enforced, no inline / wildcard scripts; REVIEW when nonces are trusted without base-uri |
 | HDR-003 | X-Content-Type-Options: nosniff |
 | HDR-004 | Referrer-Policy not leaking full URLs |
 | HDR-005 | Permissions-Policy present |
-| HDR-006 | Clickjacking protection (frame-ancestors or X-Frame-Options) |
+| HDR-006 | Clickjacking protection (frame-ancestors in any policy, or X-Frame-Options) |
 | HDR-007 | `http://` moves to `https://` with a permanent redirect |
-| HDR-008 | Security headers sent once, with valid syntax |
-| HDR-009 | Cookies: Secure, HttpOnly, SameSite (N/A when the page sets none — scan a page that does) |
-| HDR-010 | No version / technology disclosure (Server version, X-Powered-By …) |
+| HDR-008 | Security headers sent once, with valid syntax; advice: remove headers browsers no longer use |
+| HDR-009 | Cookies: Secure, HttpOnly, SameSite, and session cookies not on a publicly cacheable response (N/A when the page sets none — scan a page that does) |
+| HDR-010 | No version / technology disclosure (Server version, X-Powered-By, versioned `<meta name="generator">`, X-Backend-Server); REVIEW for an internal-looking host in Server-Timing |
 
 ## JSON
 
 One line: `schema_version`, `scanner_version`, `module`, `target`, `rule_packs`, `platforms`, `verdict`, `grade`
-(`grade`, `score`, `capped_by`, `upgrades[]` with `to`, `steps[]`, `result`, `result_score`), `summary`, `findings[]`
-(`rule_id`, `rule_version`, `title`, `status`, `severity`, `evidence[]`, `reason`, `fix_hint`, `example_fix`,
-`platform_fixes[]` with `platform`, `how`, `note`, `preferred`, `review_question`, `remediation`).
+(`grade`, `score`, `capped_by`, `upgrades[]` with `to`, `steps[]`, `result`, `result_score`), `summary` (count per
+status plus `advice`), `findings[]` (`rule_id`, `rule_version`, `title`, `status`, `severity`, `evidence[]`, `reason`,
+`fix_hint`, `example_fix`, `platform_fixes[]` with `platform`, `how`, `note`, `preferred`, `review_question`,
+`remediation`, `advice`, `effort`, `depends_on[]`, `group`). Findings come in the order to work on them.
+`--format json --compact` leaves out `remediation` and the evidence of passed checks.
 Full schema: `opencomply schema report`.
-Evidence `class`: `verified` = read from the response and used to decide; `inferred` = platform detection, guidance only.
+Evidence `class`: `verified` = read from the response and used to decide (including the page's own
+`<meta name="generator">`); `inferred` = platform detection, guidance only.

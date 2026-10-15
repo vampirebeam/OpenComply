@@ -22,6 +22,8 @@ pub struct HttpEvidence {
     pub insecure_probe: Option<InsecureProbe>,
     /// Set-Cookie values from redirect responses served over HTTPS before the evaluated page.
     pub redirect_cookies: Vec<String>,
+    /// `<meta name="generator">` content of the page (see `platform::meta_generator`), when it has one.
+    pub html_generator: Option<String>,
 }
 
 /// One response in a redirect chain.
@@ -75,7 +77,9 @@ pub enum EvalInput<'a> {
 }
 
 /// `example` overrides the rule's static `example_fix` (built from the site's own values, e.g. its CSP);
-/// `layers` says which platform layers can fix what the evidence shows (overrides the rule's static `prefer`).
+/// `layers` says which platform layers can fix what the evidence shows (overrides the rule's static `prefer`);
+/// `question` replaces the rule's `review_question` when the check knows the actual decision;
+/// `advice` = an optional improvement that leaves status, verdict and grade unchanged.
 pub(crate) struct Outcome {
     pub status: Status,
     pub detail: String,
@@ -83,6 +87,8 @@ pub(crate) struct Outcome {
     pub missing: bool,
     pub example: Option<String>,
     pub layers: Option<LayerHint>,
+    pub question: Option<String>,
+    pub advice: Option<String>,
 }
 
 impl Outcome {
@@ -94,11 +100,23 @@ impl Outcome {
             missing: false,
             example: None,
             layers: None,
+            question: None,
+            advice: None,
         }
     }
     #[must_use]
     pub fn with_layers(mut self, layers: LayerHint) -> Self {
         self.layers = Some(layers);
+        self
+    }
+    #[must_use]
+    pub fn with_question(mut self, question: &str) -> Self {
+        self.question = Some(question.to_string());
+        self
+    }
+    #[must_use]
+    pub fn with_advice(mut self, advice: Option<String>) -> Self {
+        self.advice = advice.map(|a| clip(&a));
         self
     }
     pub fn pass(detail: String) -> Self {
@@ -282,7 +300,8 @@ fn eval_files(check: &Check, probe: &dyn FileProbe, module: Module) -> Outcome {
 }
 
 /// Evaluates one rule. Fix guidance (`fix_hint`, `example_fix`, `platform_fixes`, `review_question`,
-/// `remediation`) is attached only to actionable results.
+/// `remediation`, `effort`, `depends_on`, `group`) is attached only to actionable results; a passed result with
+/// `advice` keeps the check's own example (never the rule's static fix, which was written for a failure).
 pub fn evaluate_rule(
     rule: &Rule,
     module: Module,
@@ -321,6 +340,8 @@ pub fn evaluate_rule(
         fix_hint: actionable.then(|| rule.fix_hint.clone()),
         example_fix: if actionable {
             outcome.example.or_else(|| rule.example_fix.clone())
+        } else if outcome.advice.is_some() {
+            outcome.example
         } else {
             None
         },
@@ -331,11 +352,19 @@ pub fn evaluate_rule(
         },
         // The question is for undecided results only; on a FAIL it would point the reader at the wrong decision.
         review_question: if actionable && outcome.status != Status::Fail {
-            rule.review_question.clone()
+            outcome.question.or_else(|| rule.review_question.clone())
         } else {
             None
         },
         remediation: actionable.then(|| rule.remediation.clone()),
+        advice: outcome.advice,
+        effort: if actionable { rule.effort } else { None },
+        depends_on: if actionable {
+            rule.depends_on.clone()
+        } else {
+            Vec::new()
+        },
+        group: if actionable { rule.group.clone() } else { None },
     }
 }
 

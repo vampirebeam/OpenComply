@@ -284,6 +284,10 @@ mod tests {
                 platform_fixes: vec![],
                 review_question: None,
                 remediation: None,
+                advice: None,
+                effort: None,
+                depends_on: vec![],
+                group: None,
             })
             .collect()
     }
@@ -494,6 +498,20 @@ mod tests {
             .collect();
         assert_eq!(top, [("HDR-007", 15), ("HDR-003", 10)]);
         assert!(g.upgrades[1].steps.iter().all(|s| s.required));
+    }
+
+    /// A low-severity REVIEW (e.g. an internal name in Server-Timing) costs half its weight and keeps A+.
+    #[test]
+    fn low_severity_review_keeps_a_plus() {
+        let g = grade(&|id| {
+            if id == "HDR-010" {
+                Status::NeedsReview
+            } else {
+                Status::Pass
+            }
+        });
+        assert_eq!((g.grade, g.score), (Grade::APlus, Some(98)));
+        assert!(g.capped_by.is_empty());
     }
 
     #[test]

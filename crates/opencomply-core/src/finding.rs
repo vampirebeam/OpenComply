@@ -75,6 +75,27 @@ impl Severity {
     }
 }
 
+/// How much work a fix usually takes, so the quick wins can be suggested first.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Effort {
+    Quick,
+    Moderate,
+    Involved,
+}
+
+impl Effort {
+    pub fn label(self) -> &'static str {
+        match self {
+            Effort::Quick => "quick",
+            Effort::Moderate => "moderate",
+            Effort::Involved => "involved",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Evidence {
     pub class: EvidenceClass,
@@ -85,6 +106,8 @@ pub struct Evidence {
 /// `reason` = why this result (scanner-generated, e.g. "response has no Permissions-Policy header").
 /// `fix_hint` = one-line action; `example_fix` = a concrete, copy-ready setting (e.g. the exact header line to add);
 /// `review_question` = the decision a person must make for review / unknown results; `remediation` = full guidance.
+/// `advice` = an optional improvement on a result that already counts as passed (never changes verdict or grade);
+/// `effort`, `depends_on` (rule IDs to fix first) and `group` (fixed in the same place) order and batch the work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Finding {
     pub rule_id: String,
@@ -105,6 +128,14 @@ pub struct Finding {
     pub review_question: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remediation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advice: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 /// Where and how to fix on a detected platform (e.g. Cloudflare dashboard path); `note` = platform caveat.

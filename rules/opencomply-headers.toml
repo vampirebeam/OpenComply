@@ -3,16 +3,19 @@
 
 [pack]
 id = "opencomply-headers"
-version = "1.0.0"
+version = "1.1.0"
 module = "headers"
 
 [[rule]]
 id = "HDR-001"
-version = "1.0.0"
+version = "1.1.0"
 title = "Strict-Transport-Security"
 severity = "high"
 mandatory = true
 weight = 15
+effort = "moderate"
+depends_on = ["HDR-007"]
+group = "response-headers"
 check = { op = "builtin", name = "hsts" }
 fix_hint = "send HSTS with max-age of at least 180 days, after http:// redirects to https://"
 example_fix = "Strict-Transport-Security: max-age=31536000"
@@ -47,18 +50,19 @@ how = "Site settings > Publishing > Advanced publishing options > Enable HSTS"
 
 [[rule]]
 id = "HDR-002"
-version = "1.0.0"
+version = "1.1.0"
 title = "Content-Security-Policy"
 severity = "high"
 mandatory = true
 weight = 25
 html_only = true
+effort = "involved"
 check = { op = "builtin", name = "csp" }
 fix_hint = "enforce a CSP whose script-src allows no inline or wildcard scripts"
 example_fix = '''Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-<random-per-request>'; object-src 'none'; base-uri 'self'; frame-ancestors 'self''''
 review_question = "Does any script on this site need eval()? If not, remove 'unsafe-eval'."
 upgrade_impact = "Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes"
-remediation = "CSP limits which scripts can run, so injected code (XSS) is blocked. Generate a new random nonce per response and put it on every <script>, or use hashes for fixed inline scripts. The example is a starting point, not a drop-in policy: review the whole existing CSP, check third-party scripts and framework hydration, roll out with Content-Security-Policy-Report-Only, fix what it reports, then enforce."
+remediation = "CSP limits which scripts can run, which reduces what injected code (XSS) can do. Generate a new random nonce per response and put it on every <script>, or use hashes for fixed inline scripts. With nonces, also set base-uri 'self' so an injected <base> tag cannot send the page's own scripts to another site. The example is a starting point, not a drop-in policy: review the whole existing CSP, check third-party scripts and framework hydration, roll out with Content-Security-Policy-Report-Only, fix what it reports, then enforce."
 [rule.platforms.cloudflare]
 how = "Rules > Transform Rules > Modify Response Header > Set static: Content-Security-Policy"
 note = "A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker"
@@ -92,10 +96,12 @@ note = "Webflow pages contain inline scripts; start with Report-Only"
 
 [[rule]]
 id = "HDR-003"
-version = "1.0.0"
+version = "1.1.0"
 title = "X-Content-Type-Options"
 severity = "medium"
 weight = 10
+effort = "quick"
+group = "response-headers"
 check = { op = "header_equals", header = "x-content-type-options", value = "nosniff" }
 fix_hint = "send X-Content-Type-Options: nosniff"
 example_fix = "X-Content-Type-Options: nosniff"
@@ -129,10 +135,12 @@ how = "Enterprise: custom security headers; other plans: a proxy or CDN you cont
 
 [[rule]]
 id = "HDR-004"
-version = "1.0.0"
+version = "1.1.0"
 title = "Referrer-Policy"
 severity = "low"
 weight = 5
+effort = "quick"
+group = "response-headers"
 check = { op = "builtin", name = "referrer_policy" }
 fix_hint = "send Referrer-Policy: strict-origin-when-cross-origin (or stricter)"
 example_fix = "Referrer-Policy: strict-origin-when-cross-origin"
@@ -163,11 +171,13 @@ how = "Set it on the web server or CDN in front of WordPress"
 
 [[rule]]
 id = "HDR-005"
-version = "1.0.0"
+version = "1.1.0"
 title = "Permissions-Policy"
 severity = "low"
 weight = 5
 html_only = true
+effort = "quick"
+group = "response-headers"
 check = { op = "header_present", header = "permissions-policy" }
 fix_hint = "send a Permissions-Policy that turns off features the site does not use"
 example_fix = "Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()"
@@ -198,12 +208,14 @@ how = "Set it on the web server or CDN in front of WordPress"
 
 [[rule]]
 id = "HDR-006"
-version = "1.0.0"
+version = "1.1.0"
 title = "Clickjacking protection"
 severity = "medium"
 mandatory = true
 weight = 10
 html_only = true
+effort = "quick"
+group = "response-headers"
 check = { op = "builtin", name = "clickjacking" }
 fix_hint = "add CSP frame-ancestors 'self' (or X-Frame-Options: SAMEORIGIN)"
 example_fix = "Content-Security-Policy: frame-ancestors 'self'"
@@ -236,11 +248,12 @@ how = "Enterprise: custom security headers; other plans: a proxy or CDN you cont
 
 [[rule]]
 id = "HDR-007"
-version = "1.0.0"
+version = "1.1.0"
 title = "HTTPS enforcement"
 severity = "high"
 mandatory = true
 weight = 15
+effort = "moderate"
 check = { op = "builtin", name = "https_redirect" }
 fix_hint = "redirect every http:// request to https:// with 301 or 308"
 example_fix = "http://example.com/ → 301 → https://example.com/"
@@ -272,27 +285,29 @@ how = "Site settings > Publishing > Advanced publishing options > Enable SSL (re
 
 [[rule]]
 id = "HDR-008"
-version = "1.0.0"
+version = "1.1.0"
 title = "Security header syntax"
 severity = "medium"
 weight = 5
+effort = "quick"
 check = { op = "builtin", name = "header_syntax" }
 fix_hint = "send each security header once, with valid syntax"
 upgrade_impact = "None for users; may require removing a duplicate header from one layer (app, server or CDN)"
-remediation = "Browsers silently ignore security headers that are duplicated with different values or written in invalid syntax, so the protection you think you have is not active. Check every layer (app, server, CDN) for headers added twice."
+remediation = "Browsers silently ignore security headers that are duplicated with different values or written in invalid syntax, so the protection you think you have is not active. Check every layer (app, server, CDN) for headers added twice. Headers current browsers no longer use (X-XSS-Protection other than 0, Expect-CT, Feature-Policy, Public-Key-Pins) can be removed."
 
 [[rule]]
 id = "HDR-009"
-version = "1.0.0"
+version = "1.1.0"
 title = "Cookie security"
 severity = "medium"
 weight = 5
+effort = "moderate"
 check = { op = "builtin", name = "cookies" }
 fix_hint = "mark cookies Secure, HttpOnly (unless scripts need them) and SameSite=Lax"
 example_fix = "Set-Cookie: session=<value>; Path=/; Secure; HttpOnly; SameSite=Lax"
 review_question = "Does page JavaScript need to read these cookies? If not, add HttpOnly."
 upgrade_impact = "HttpOnly cookies can no longer be read by your own JavaScript; Secure cookies are not sent over http://"
-remediation = "Secure keeps cookies off http://, HttpOnly hides them from scripts (so XSS cannot steal sessions), SameSite=Lax limits cross-site requests (CSRF). Set them where the cookie is created: framework session settings or app code."
+remediation = "Secure keeps cookies off http://, HttpOnly hides them from scripts (so injected scripts cannot read them), SameSite=Lax limits cross-site requests (CSRF). Set them where the cookie is created: framework session settings or app code. A response that sets a session cookie should send Cache-Control: private (or no-store), so a shared cache never stores it and hands it to other visitors."
 [rule.platforms.php]
 how = "php.ini: session.cookie_secure=1, session.cookie_httponly=1, session.cookie_samesite=Lax"
 prefer = true
@@ -325,14 +340,15 @@ how = "Fix the cookie where the app sets it; Cloudflare's own cookies (e.g. __cf
 
 [[rule]]
 id = "HDR-010"
-version = "1.0.0"
+version = "1.1.0"
 title = "Technology disclosure"
 severity = "low"
 weight = 5
+effort = "quick"
 check = { op = "builtin", name = "info_disclosure" }
-fix_hint = "remove X-Powered-By and version numbers from Server and similar headers"
+fix_hint = "remove X-Powered-By, version numbers and internal host names from headers and meta generator"
 upgrade_impact = "None for users; only hides version details"
-remediation = "Version headers let attackers look up known vulnerabilities for your exact software without probing. Removing them is not a fix for outdated software, but it stops free reconnaissance. Keep the software updated as well."
+remediation = "Version headers let attackers look up known vulnerabilities for your exact software without probing. Removing them is not a fix for outdated software, but it stops free reconnaissance. Keep the software updated as well. The same applies to a <meta name=\"generator\"> tag with a version, and to internal server names in X-Backend-Server or Server-Timing."
 [rule.platforms.cloudflare]
 how = "Rules > Transform Rules > Modify Response Header > Remove: X-Powered-By"
 [rule.platforms.cloudfront]
@@ -357,6 +373,19 @@ how = "next.config.js: poweredByHeader: false"
 prefer = true
 [rule.platforms.aspnet]
 how = '''web.config: <httpRuntime enableVersionHeader="false" />; customHeaders <remove name="X-Powered-By" />'''
+note = "X-AspNetMvc-Version: MvcHandler.DisableMvcResponseHeader = true in Application_Start"
 prefer = true
 [rule.platforms.wordpress]
 how = "php.ini expose_php = Off, and hide the server version on the web server"
+note = "meta generator: remove_action('wp_head', 'wp_generator') in the theme's functions.php"
+[rule.platforms.nuxt]
+how = "nuxt-security module (hidePoweredBy, on by default), or a Nitro server middleware that removes X-Powered-By"
+prefer = true
+[rule.platforms.drupal]
+how = "Remove HTTP headers module (Drupal 10+) drops X-Generator and the meta generator; or unset X-Generator on the web server"
+prefer = true
+[rule.platforms.laravel]
+how = "PHP: expose_php = Off; Statamic: 'send_powered_by_header' => false in config/statamic/system.php"
+prefer = true
+[rule.platforms.trafficserver]
+how = "records: proxy.config.http.response_server_str ATS (no version), or proxy.config.http.response_server_enabled 0"

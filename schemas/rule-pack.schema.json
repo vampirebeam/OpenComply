@@ -221,6 +221,15 @@
         }
       ]
     },
+    "Effort": {
+      "description": "How much work a fix usually takes, so the quick wins can be suggested first.",
+      "type": "string",
+      "enum": [
+        "quick",
+        "moderate",
+        "involved"
+      ]
+    },
     "Module": {
       "type": "string",
       "enum": [
@@ -281,6 +290,26 @@
         "check": {
           "$ref": "#/$defs/Check"
         },
+        "depends_on": {
+          "description": "Rule IDs in this pack to fix before this one (e.g. HSTS after the http:// → https:// redirect).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "effort": {
+          "description": "How much work the fix usually takes.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "example_fix": {
           "type": [
             "string",
@@ -290,6 +319,14 @@
         },
         "fix_hint": {
           "type": "string"
+        },
+        "group": {
+          "description": "Rules fixed in the same place share a group (e.g. `response-headers`).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "html_only": {
           "description": "Only meaningful for pages rendered in a browser; a non-HTML response (e.g. a JSON API) makes it N/A.",

@@ -91,6 +91,9 @@ pub fn redact_report(report: &Report) -> Report {
         if let Some(reason) = &f.reason {
             f.reason = Some(redact(reason).into_owned());
         }
+        if let Some(advice) = &f.advice {
+            f.advice = Some(redact(advice).into_owned());
+        }
     }
     for p in &mut r.platforms {
         p.evidence.detail = redact(&p.evidence.detail).into_owned();
@@ -217,12 +220,22 @@ mod tests {
             platform_fixes: vec![],
             review_question: None,
             remediation: None,
+            advice: Some("password=hunter2xyz".into()),
+            effort: None,
+            depends_on: vec![],
+            group: None,
         };
         let r = Report::new(Module::Headers, "https://example.com", vec![finding])
             .with_platforms(detect_platforms(&headers, "GET x"));
         let red = redact_report(&r);
         let all = format!("{red:?}");
-        for secret in ["eyJpdiI6IjEyMyJ9", "abcdef123456", "pw12345", "abcd1234"] {
+        for secret in [
+            "eyJpdiI6IjEyMyJ9",
+            "abcdef123456",
+            "pw12345",
+            "abcd1234",
+            "hunter2xyz",
+        ] {
             assert!(!all.contains(secret), "{secret} leaked");
         }
     }

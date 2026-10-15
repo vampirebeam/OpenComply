@@ -30,6 +30,8 @@ pub struct Summary {
     pub not_applicable: usize,
     pub needs_review: usize,
     pub insufficient_evidence: usize,
+    /// Findings carrying optional advice (also counted under their status).
+    pub advice: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -98,6 +100,9 @@ impl Report {
                 Status::NotApplicable => s.not_applicable += 1,
                 Status::NeedsReview => s.needs_review += 1,
                 Status::InsufficientEvidence => s.insufficient_evidence += 1,
+            }
+            if f.advice.is_some() {
+                s.advice += 1;
             }
         }
         s

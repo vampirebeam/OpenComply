@@ -89,6 +89,7 @@ fn http(headers: &[(&str, &str)]) -> HttpEvidence {
         https: true,
         insecure_probe: None,
         redirect_cookies: vec![],
+        html_generator: None,
     }
 }
 

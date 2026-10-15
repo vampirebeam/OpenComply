@@ -91,6 +91,52 @@ fn semantic_problems_are_all_reported() {
     assert!(found.iter().any(|i| i.contains("0–100")), "{found:?}");
 }
 
+/// `effort`, `depends_on` and `group` are optional; dependencies must name another rule of the pack without a cycle.
+#[test]
+fn work_order_fields_are_validated() {
+    let with = |a: &str, b: &str| {
+        VALID
+            .replace("weight = 20", &format!("weight = 20\n{a}"))
+            .replace("weight = 10", &format!("weight = 10\n{b}"))
+    };
+    let ok = RulePack::from_toml(&with(
+        "effort = \"moderate\"\ndepends_on = [\"HDR-003\"]\ngroup = \"response-headers\"",
+        "effort = \"quick\"\ngroup = \"response-headers\"",
+    ))
+    .unwrap();
+    assert_eq!(ok.rules[0].depends_on, ["HDR-003"]);
+    assert_eq!(ok.rules[1].effort, Some(opencomply_core::Effort::Quick));
+    assert!(matches!(
+        RulePack::from_toml(&with("effort = \"hard\"", "")),
+        Err(LoadError::Parse(_))
+    ));
+    let cycle = issues(&with(
+        "depends_on = [\"HDR-003\"]",
+        "depends_on = [\"HDR-001\"]",
+    ));
+    assert!(
+        cycle
+            .iter()
+            .filter(|i| i.contains("dependency cycle"))
+            .count()
+            == 2,
+        "{cycle:?}"
+    );
+    let bad = issues(&with(
+        "depends_on = [\"HDR-001\", \"HDR-009\"]\ngroup = \"Response Headers!\"",
+        "",
+    ));
+    assert!(
+        bad.iter().any(|i| i.contains("cannot depend on itself")),
+        "{bad:?}"
+    );
+    assert!(
+        bad.iter().any(|i| i.contains("no rule with this id")),
+        "{bad:?}"
+    );
+    assert!(bad.iter().any(|i| i.contains(".group")), "{bad:?}");
+}
+
 #[test]
 fn bad_id_and_cross_module_operator_are_rejected() {
     let src = VALID.replace("HDR-003", "TLS-003").replace(

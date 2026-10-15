@@ -5,8 +5,8 @@
 
 use opencomply_core::rules::RulePack;
 use opencomply_core::{
-    detect_platforms, evaluate_pack, render, EvalInput, Format, Grade, HttpEvidence, InsecureProbe,
-    RedirectHop, Report, Status,
+    detect_platforms, evaluate_pack, render, EvalInput, ExitCode, FailOn, Format, Grade,
+    HttpEvidence, InsecureProbe, RedirectHop, Report, Status, Verdict,
 };
 
 use opencomply_core::rules::OFFICIAL_HEADERS_PACK as PACK;
@@ -44,6 +44,7 @@ fn scan(headers: &[(&str, &str)], probe: InsecureProbe) -> Report {
         https: true,
         insecure_probe: Some(probe),
         redirect_cookies: vec![],
+        html_generator: None,
     };
     let platforms = detect_platforms(&http.headers, &http.source);
     evaluate_pack(
@@ -78,6 +79,7 @@ fn pack_shape() {
     assert_eq!(mandatory, ["HDR-001", "HDR-002", "HDR-006", "HDR-007"]);
 }
 
+/// Everything passes; the only advice left (HSTS preload) is optional, so it changes neither verdict, exit code nor grade.
 #[test]
 fn strong_site_passes_everything() {
     let r = scan(
@@ -86,7 +88,7 @@ fn strong_site_passes_everything() {
             ("Strict-Transport-Security", "max-age=63072000; includeSubDomains"),
             (
                 "Content-Security-Policy",
-                "default-src 'self'; script-src 'self' 'nonce-r4nd0m'; frame-ancestors 'self'; object-src 'none'",
+                "default-src 'self'; script-src 'self' 'nonce-r4nd0m'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'",
             ),
             ("X-Content-Type-Options", "nosniff"),
             ("Referrer-Policy", "strict-origin-when-cross-origin"),
@@ -101,8 +103,29 @@ fn strong_site_passes_everything() {
     }
     let g = r.grade.as_ref().unwrap();
     assert_eq!((g.grade, g.score), (Grade::APlus, Some(100)));
-    assert!(render(&r, Format::Summary, false)
-        .starts_with("headers https://example.com/ verdict=pass grade=A+ score=100 "));
+    assert!(g.upgrades.is_empty() && g.capped_by.is_empty());
+    let advised: Vec<&str> = r
+        .findings
+        .iter()
+        .filter(|f| f.advice.is_some())
+        .map(|f| f.rule_id.as_str())
+        .collect();
+    assert_eq!(advised, ["HDR-001"]);
+    assert_eq!(r.verdict(), Verdict::Pass);
+    assert_eq!(r.exit_code(FailOn::Review), ExitCode::Ok);
+    let summary = render(&r, Format::Summary, false);
+    assert!(
+        summary.starts_with(
+            "headers https://example.com/ verdict=pass grade=A+ score=100 pass=10 fail=0 unknown=0 review=0 no_evidence=0 n/a=0 advice=1"
+        ),
+        "{summary}"
+    );
+    assert!(summary
+        .contains("PASS HDR-001 high Strict-Transport-Security\n  advice: optional: preload"));
+    assert!(
+        summary.ends_with("next: nothing to fix · advice 1 (optional)\n"),
+        "{summary}"
+    );
 }
 
 /// Guidance follows the evidence: a `Server` version is fixed in the web server, never offered as an app setting;
@@ -340,6 +363,125 @@ fn bare_site_fails_with_clear_reasons() {
     let json: serde_json::Value = serde_json::from_str(&render(&r, Format::Json, false)).unwrap();
     assert_eq!(json["grade"]["grade"], "F");
     assert!(render(&r, Format::Markdown, false).contains("| Grade | **F** (0/100) |"));
+}
+
+/// Work order on a bare site: HSTS waits for the http:// redirect (`after:`), quick fixes lead within a severity, and
+/// the five response headers set in one place are listed once.
+#[test]
+fn bare_site_work_order() {
+    let probe = InsecureProbe::Responded {
+        chain: vec![RedirectHop {
+            url: "http://example.com/".into(),
+            status: 200,
+            location: None,
+        }],
+        final_url: "http://example.com/".into(),
+    };
+    let r = scan(
+        &[("Content-Type", "text/html"), ("X-Powered-By", "PHP/8.1.2")],
+        probe,
+    );
+    let out = render(&r, Format::Summary, false);
+    let order: Vec<&str> = out
+        .lines()
+        .filter(|l| l.starts_with("FAIL "))
+        .map(|l| l.split(' ').nth(1).unwrap())
+        .collect();
+    assert_eq!(
+        order,
+        ["HDR-007", "HDR-002", "HDR-003", "HDR-006", "HDR-004", "HDR-005", "HDR-010", "HDR-001"],
+        "{out}"
+    );
+    assert!(out.contains(
+        "FAIL HDR-001 high Strict-Transport-Security missing · moderate\n  after: HDR-007\n"
+    ));
+    assert!(out.contains("FAIL HDR-002 high Content-Security-Policy missing · involved\n"));
+    assert!(out.contains(
+        "together (response-headers): HDR-003 · HDR-006 · HDR-004 · HDR-005 · HDR-001\n"
+    ));
+    let json: serde_json::Value = serde_json::from_str(&render(&r, Format::Json, false)).unwrap();
+    let hsts = json["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["rule_id"] == "HDR-001")
+        .unwrap();
+    assert_eq!(hsts["effort"], "moderate");
+    assert_eq!(hsts["depends_on"][0], "HDR-007");
+    assert_eq!(hsts["group"], "response-headers");
+}
+
+/// Places to fix each leaked value that the software itself emits (checked against each project's documentation).
+#[test]
+fn disclosure_guides_for_more_software() {
+    let fixes = |headers: &[(&str, &str)]| {
+        let mut h = vec![("Content-Type", "text/html")];
+        h.extend_from_slice(headers);
+        let r = scan(&h, redirect(301));
+        finding(&r, "HDR-010")
+            .platform_fixes
+            .iter()
+            .map(|p| {
+                (
+                    p.platform.clone(),
+                    p.preferred,
+                    format!("{} {:?}", p.how, p.note),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let nuxt = fixes(&[("X-Powered-By", "Nuxt")]);
+    assert_eq!((nuxt[0].0.as_str(), nuxt[0].1), ("nuxt", true));
+    assert!(nuxt[0].2.contains("hidePoweredBy"));
+    let drupal = fixes(&[("X-Generator", "Drupal 10 (https://www.drupal.org)")]);
+    assert_eq!((drupal[0].0.as_str(), drupal[0].1), ("drupal", true));
+    assert!(drupal[0].2.contains("X-Generator"));
+    let ats = fixes(&[("Server", "ATS/9.2.15")]);
+    assert_eq!(ats.len(), 1);
+    assert_eq!((ats[0].0.as_str(), ats[0].1), ("trafficserver", true));
+    assert!(ats[0].2.contains("proxy.config.http.response_server_str"));
+    let mvc = fixes(&[("X-Powered-By", "ASP.NET"), ("X-AspNetMvc-Version", "5.2")]);
+    assert_eq!(mvc[0].0, "aspnet");
+    assert!(mvc[0].2.contains("DisableMvcResponseHeader"));
+    let statamic = fixes(&[
+        ("X-Powered-By", "Statamic"),
+        (
+            "Set-Cookie",
+            "laravel_session=eyJpdiI6IjEifQ; Secure; HttpOnly; SameSite=Lax",
+        ),
+    ]);
+    assert_eq!(statamic[0].0, "laravel");
+    assert!(statamic[0].2.contains("send_powered_by_header"));
+}
+
+/// A versioned `<meta name="generator">` is disclosure too, fixed in the software that writes it.
+#[test]
+fn meta_generator_with_a_version_fails_hdr_010() {
+    let http = HttpEvidence {
+        source: "GET https://example.com/".into(),
+        status: 200,
+        headers: vec![("Content-Type".into(), "text/html".into())],
+        https: true,
+        insecure_probe: Some(redirect(301)),
+        redirect_cookies: vec![],
+        html_generator: Some("WordPress 6.5.2".into()),
+    };
+    let platforms = opencomply_core::detect_from_html(
+        "<link rel=stylesheet href=\"/wp-content/themes/x/style.css\">",
+        &http.source,
+    );
+    let r = evaluate_pack(
+        &pack(),
+        "https://example.com/",
+        &EvalInput::Http(&http),
+        platforms,
+    );
+    let f = finding(&r, "HDR-010");
+    assert_eq!(f.status, Status::Fail);
+    assert_eq!(f.evidence[0].detail, "meta generator: WordPress 6.5.2");
+    let wp = &f.platform_fixes[0];
+    assert_eq!((wp.platform.as_str(), wp.preferred), ("wordpress", true));
+    assert!(wp.note.as_deref().unwrap_or("").contains("wp_generator"));
 }
 
 #[test]

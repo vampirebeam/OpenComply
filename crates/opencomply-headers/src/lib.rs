@@ -1,5 +1,5 @@
 //! Security headers scanner. Two requests per scan, both through the SSRF-safe client:
-//! 1. the target, redirects followed, body capped (for platform fingerprints);
+//! 1. the target, redirects followed, body capped (for platform fingerprints and the page's meta generator);
 //! 2. the `http://` version of the same URL, to see whether it serves the page or moves to HTTPS.
 //!
 //! An `http://` target reuses request 1 for both. Evidence → official headers pack → findings + grade.
@@ -8,8 +8,8 @@ use opencomply_core::limits::Deadline;
 use opencomply_core::rules::{RulePack, OFFICIAL_HEADERS_PACK, OFFICIAL_HEADERS_SIG};
 use opencomply_core::signing::TrustedKey;
 use opencomply_core::{
-    detect_from_html, detect_platforms, merge_platforms, without_host_infra, Error, EvalInput,
-    HttpEvidence, InsecureProbe, Limits, Module, Report, RuleRegistry,
+    detect_from_html, detect_platforms, merge_platforms, meta_generator, without_host_infra, Error,
+    EvalInput, HttpEvidence, InsecureProbe, Limits, Module, Report, RuleRegistry,
 };
 use opencomply_http::{validate_target, FetchOptions, FetchResult, NetPolicy, SafeClient};
 use url::Url;
@@ -163,6 +163,7 @@ pub async fn scan_headers(
         headers: main.headers,
         insecure_probe: probe,
         redirect_cookies: main.redirect_cookies,
+        html_generator: main.body.as_deref().and_then(meta_generator),
     };
     let report = registry.evaluate(
         Module::Headers,

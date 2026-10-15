@@ -40,6 +40,10 @@ fn finding(title: String, detail: String, reason: String, status: Status) -> Fin
         platform_fixes: vec![],
         review_question: None,
         remediation: Some("r".into()),
+        advice: None,
+        effort: None,
+        depends_on: vec![],
+        group: None,
     }
 }
 
@@ -131,6 +135,9 @@ proptest! {
             upgrade_impact: None,
             remediation: "r".into(),
             platforms: std::collections::BTreeMap::new(),
+            effort: None,
+            depends_on: vec![],
+            group: None,
         };
         let http = HttpEvidence {
             source: "GET x".into(),
@@ -158,7 +165,10 @@ proptest! {
                 ("X-Frame-Options".into(), xfo),
                 ("Referrer-Policy".into(), other.clone()),
                 ("Permissions-Policy".into(), other.clone()),
-                ("Server".into(), other),
+                ("Server-Timing".into(), other.clone()),
+                ("Cache-Control".into(), other.clone()),
+                ("X-XSS-Protection".into(), other.clone()),
+                ("Server".into(), other.clone()),
             ],
             https,
             insecure_probe: Some(InsecureProbe::Responded {
@@ -166,10 +176,14 @@ proptest! {
                 final_url: "http://x/".into(),
             }),
             redirect_cookies: vec![format!("hop=SECRETHOPVALUE;{cookie}")],
+            html_generator: Some(other),
         };
         for rule in &pack.rules {
             let f = evaluate_rule(rule, Module::Headers, &EvalInput::Http(&http), &[]);
             prop_assert!(f.evidence[0].detail.chars().count() <= 301);
+            prop_assert!(f.advice.as_ref().is_none_or(|a| a.chars().count() <= 301));
+            prop_assert!(!f.advice.as_deref().unwrap_or("").contains("SECRETCOOKIEVALUE"), "{}", rule.id);
+            prop_assert!(f.review_question.as_ref().is_none_or(|q| q.chars().count() <= opencomply_core::MAX_HINT_CHARS));
             prop_assert!(f.example_fix.as_ref().is_none_or(|e| e.chars().count() <= opencomply_core::MAX_EXAMPLE_CHARS));
             prop_assert!(!f.evidence[0].detail.contains("SECRETCOOKIEVALUE"), "{}", rule.id);
             prop_assert!(!f.evidence[0].detail.contains("SECRETHOPVALUE"), "{}", rule.id);
