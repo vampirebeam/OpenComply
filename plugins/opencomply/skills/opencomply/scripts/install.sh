@@ -1,4 +1,5 @@
 #!/bin/sh
+# OpenComply - Copyright 2026 vampirebeam - Apache-2.0 - https://github.com/vampirebeam/OpenComply
 # Installs the opencomply CLI from the GitHub release that matches this script, after checking its SHA-256, so that
 # `opencomply` works in any new terminal. User-level only (no sudo): the binary goes to
 # ~/.local/share/opencomply/vX.Y.Z and is linked as ~/.local/bin/opencomply; older versions are removed.
@@ -6,7 +7,7 @@
 # Supported: Linux x86_64, macOS Apple Silicon. Override the version with OPENCOMPLY_VERSION=X.Y.Z.
 set -eu
 
-VERSION="${OPENCOMPLY_VERSION:-0.3.0}"
+VERSION="${OPENCOMPLY_VERSION:-0.3.1}"
 REPO="vampirebeam/OpenComply"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/opencomply"
 LINK="$HOME/.local/bin/opencomply"

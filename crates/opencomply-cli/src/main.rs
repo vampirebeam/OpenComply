@@ -3,9 +3,12 @@
 
 #![allow(clippy::print_stdout)]
 
+mod guard;
+
 use std::io::{Read, Write};
 
 use clap::{Parser, Subcommand, ValueEnum};
+use opencomply_core::redact::redact;
 use opencomply_core::rules::{LoadError, RulePack, MAX_PACK_BYTES};
 use opencomply_core::schema;
 use opencomply_core::signing::{TrustedKey, MAX_SIGNATURE_FILE_BYTES};
@@ -19,7 +22,8 @@ use opencomply_http::NetPolicy;
 #[command(
     name = "opencomply",
     version,
-    about = "Security and compliance scanner. No telemetry; contacts only the targets you scan."
+    about = "Security and compliance scanner. No telemetry; contacts only the targets you scan.",
+    after_help = "OpenComply - Copyright 2026 vampirebeam - Apache-2.0 - https://github.com/vampirebeam/OpenComply"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -60,6 +64,12 @@ enum Command {
         #[command(subcommand)]
         action: RulesAction,
     },
+    /// Check an AI agent's tool call (hook event on stdin) before it sends or saves scan results; used by the agent plugin
+    Guard {
+        /// Hook format of the agent
+        #[arg(long, value_enum, default_value_t = guard::Agent::Claude)]
+        agent: guard::Agent,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -95,7 +105,7 @@ enum RulesAction {
 /// Only shipped modules are exposed; the CLI never lists or accepts a module that has no scanner.
 #[derive(Subcommand)]
 enum ScanModule {
-    /// HTTP security headers of a URL
+    /// HTTP security headers of a URL (https:// is assumed when no scheme is given)
     Headers { url: String },
 }
 
@@ -122,9 +132,28 @@ impl From<OutputFormat> for Format {
 impl ScanModule {
     fn into_parts(self) -> (Module, Target) {
         match self {
-            ScanModule::Headers { url } => (Module::Headers, Target::Url(url)),
+            ScanModule::Headers { url } => (Module::Headers, Target::Url(with_scheme(&url))),
         }
     }
+}
+
+/// People type `www.example.com`: a target without a scheme is scanned over HTTPS.
+fn with_scheme(url: &str) -> String {
+    let url = url.trim();
+    if url.contains("://") {
+        url.to_string()
+    } else {
+        format!("https://{url}")
+    }
+}
+
+/// Diagnostics can quote the target URL or a server's reply (e.g. a network error naming `…?token=…`): they get the
+/// same secret redaction and control-character stripping as the report before reaching the terminal or an agent.
+fn safe(text: &str) -> String {
+    redact(text)
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 /// Runs one scan on a single-threaded runtime; scanner warnings go to stderr so stdout stays the report.
@@ -143,7 +172,7 @@ fn run_scan(
                 .map_err(Error::Io)?;
             let out = rt.block_on(opencomply_headers::scan_headers(url, limits, policy))?;
             for w in &out.warnings {
-                eprintln!("opencomply: warning: {w}");
+                eprintln!("opencomply: warning: {}", safe(w));
             }
             Ok(out.report)
         }
@@ -276,7 +305,7 @@ fn main() -> std::process::ExitCode {
                     }
                 }
                 Err(e) => {
-                    eprintln!("opencomply: {e}");
+                    eprintln!("opencomply: {}", safe(&e.to_string()));
                     e.exit_code()
                 }
             }
@@ -296,6 +325,16 @@ fn main() -> std::process::ExitCode {
         Command::Rules {
             action: RulesAction::Validate { files },
         } => validate_rules(&files),
+        Command::Guard { agent } => {
+            let mut event = Vec::new();
+            let _ = std::io::stdin()
+                .take(guard::MAX_EVENT_BYTES)
+                .read_to_end(&mut event);
+            if let Some(out) = guard::run(agent, &String::from_utf8_lossy(&event)) {
+                println!("{out}");
+            }
+            ExitCode::Ok
+        }
     };
     std::process::ExitCode::from(code as u8)
 }

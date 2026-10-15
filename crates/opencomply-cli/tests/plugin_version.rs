@@ -11,23 +11,20 @@ fn plugin_and_installers_match_the_binary_version() {
         "plugin.json"
     );
 
-    let sh = opencomply_core::root_file!(
-        "plugins/opencomply/skills/security-headers/scripts/install.sh"
-    );
+    let sh = opencomply_core::root_file!("plugins/opencomply/skills/opencomply/scripts/install.sh");
     assert!(
         sh.contains(&format!("OPENCOMPLY_VERSION:-{VERSION}}}")),
         "install.sh"
     );
 
-    let ps1 = opencomply_core::root_file!(
-        "plugins/opencomply/skills/security-headers/scripts/install.ps1"
-    );
+    let ps1 =
+        opencomply_core::root_file!("plugins/opencomply/skills/opencomply/scripts/install.ps1");
     assert!(
         ps1.contains(&format!("else {{ '{VERSION}' }}")),
         "install.ps1"
     );
 
-    let skill = opencomply_core::root_file!("plugins/opencomply/skills/security-headers/SKILL.md");
+    let skill = opencomply_core::root_file!("plugins/opencomply/skills/opencomply/SKILL.md");
     assert!(
         skill.contains(&format!("opencomply {VERSION}")),
         "SKILL.md version check"

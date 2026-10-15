@@ -717,18 +717,19 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "opencomply-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "clap",
  "opencomply-core",
  "opencomply-headers",
  "opencomply-http",
+ "serde_json",
  "tokio",
 ]
 
 [[package]]
 name = "opencomply-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ed25519-dalek",
  "proptest",
@@ -742,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "opencomply-headers"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "opencomply-core",
  "opencomply-http",
@@ -752,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "opencomply-http"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "opencomply-core",
  "reqwest",

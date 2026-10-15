@@ -2,6 +2,7 @@
 name = "opencomply-cli"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
@@ -19,3 +20,4 @@ opencomply-http.workspace = true
 opencomply-headers.workspace = true
 tokio.workspace = true
 clap.workspace = true
+serde_json.workspace = true

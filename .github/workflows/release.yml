@@ -65,7 +65,7 @@ jobs:
       # The installers at releases/latest/download/install.{sh,ps1}: one source, the plugin's own scripts.
       - name: Attach installers
         run: |
-          dir=plugins/opencomply/skills/security-headers/scripts
+          dir=plugins/opencomply/skills/opencomply/scripts
           if [ -f "$dir/install.sh" ]; then
             gh release upload "$TAG" "$dir/install.sh" "$dir/install.ps1" --repo "$GITHUB_REPOSITORY"
           fi

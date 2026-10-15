@@ -3,16 +3,17 @@ resolver = "2"
 members = ["crates/opencomply-core", "crates/opencomply-http", "crates/opencomply-headers", "crates/opencomply-cli"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
+authors = ["vampirebeam"]
 license = "Apache-2.0"
 repository = "https://github.com/vampirebeam/OpenComply"
 rust-version = "1.90"
 
 [workspace.dependencies]
-opencomply-core = { path = "crates/opencomply-core", version = "0.3.0" }
-opencomply-http = { path = "crates/opencomply-http", version = "0.3.0" }
-opencomply-headers = { path = "crates/opencomply-headers", version = "0.3.0" }
+opencomply-core = { path = "crates/opencomply-core", version = "0.3.1" }
+opencomply-http = { path = "crates/opencomply-http", version = "0.3.1" }
+opencomply-headers = { path = "crates/opencomply-headers", version = "0.3.1" }
 tokio = { version = "1.40", default-features = false, features = ["rt", "macros", "net", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 url = "2.5"

@@ -1,3 +1,4 @@
+# OpenComply - Copyright 2026 vampirebeam - Apache-2.0 - https://github.com/vampirebeam/OpenComply
 # Installs the opencomply CLI for Windows x86_64 from the GitHub release that matches this script, after checking its
 # SHA-256, so that `opencomply` works in any new terminal. User-level only (no admin): the binary goes to
 # %LOCALAPPDATA%\opencomply\bin, which is added to the user PATH; older versions are replaced.
@@ -9,7 +10,7 @@ param([switch]$Uninstall)
     param([bool]$Uninstall)
     $ErrorActionPreference = 'Stop'
 
-    $Version = if ($env:OPENCOMPLY_VERSION) { $env:OPENCOMPLY_VERSION } else { '0.3.0' }
+    $Version = if ($env:OPENCOMPLY_VERSION) { $env:OPENCOMPLY_VERSION } else { '0.3.1' }
     $Repo = 'vampirebeam/OpenComply'
     $Root = Join-Path $env:LOCALAPPDATA 'opencomply'
     $BinDir = Join-Path $Root 'bin'
