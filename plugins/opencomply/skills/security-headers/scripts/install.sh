@@ -6,7 +6,7 @@
 # Supported: Linux x86_64, macOS Apple Silicon. Override the version with OPENCOMPLY_VERSION=X.Y.Z.
 set -eu
 
-VERSION="${OPENCOMPLY_VERSION:-0.2.1}"
+VERSION="${OPENCOMPLY_VERSION:-0.2.2}"
 REPO="vampirebeam/OpenComply"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/opencomply"
 LINK="$HOME/.local/bin/opencomply"
@@ -73,7 +73,7 @@ ln -sf "$BIN" "$LINK"
 
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
-  *) echo "opencomply: add ~/.local/bin to PATH to run 'opencomply' from any terminal, e.g. in ~/.profile:" >&2
+  *) echo "opencomply: add ~/.local/bin to PATH to run 'opencomply' from any terminal (then restart open terminals, including those inside VS Code or Claude Code), e.g. in ~/.profile:" >&2
      echo '  export PATH="$HOME/.local/bin:$PATH"' >&2 ;;
 esac
 echo "$LINK"

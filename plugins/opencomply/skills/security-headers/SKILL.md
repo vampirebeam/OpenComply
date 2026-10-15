@@ -12,8 +12,12 @@ It checks HTTP security headers only. Do not use it for other questions, and do 
 
 ## 1. Find or install the CLI
 
-1. Run `opencomply --version`. If it prints `opencomply 0.2.1` or later, use `opencomply`.
-2. If it is missing or older, **ask the user first**, then run the installer bundled with this skill. It downloads the
+1. Run `opencomply --version`. If it prints `opencomply 0.2.2` or later, use `opencomply`.
+2. If the command is not found, it may be installed but not yet on this session's PATH (the app was open during the
+   install). Try the standard location before anything else and use it if it prints a version:
+   - Windows: `%LOCALAPPDATA%\opencomply\bin\opencomply.exe`
+   - Linux / macOS: `~/.local/bin/opencomply`
+3. Only if it is missing or older, **ask the user first**, then run the installer bundled with this skill. It downloads the
    matching release from github.com/vampirebeam/OpenComply, checks its SHA-256, needs no admin rights, and makes
    `opencomply` available in new terminals (Windows: adds `%LOCALAPPDATA%\opencomply\bin` to the user PATH;
    Linux / macOS: links `~/.local/bin/opencomply`). Tell the user it does this. In the current session use the path it

@@ -9,7 +9,7 @@ param([switch]$Uninstall)
     param([bool]$Uninstall)
     $ErrorActionPreference = 'Stop'
 
-    $Version = if ($env:OPENCOMPLY_VERSION) { $env:OPENCOMPLY_VERSION } else { '0.2.1' }
+    $Version = if ($env:OPENCOMPLY_VERSION) { $env:OPENCOMPLY_VERSION } else { '0.2.2' }
     $Repo = 'vampirebeam/OpenComply'
     $Root = Join-Path $env:LOCALAPPDATA 'opencomply'
     $BinDir = Join-Path $Root 'bin'
@@ -74,7 +74,7 @@ param([switch]$Uninstall)
 
     if (-not ((Get-UserPath) -split ';' | Where-Object { $_.TrimEnd('\') -eq $BinDir.TrimEnd('\') })) {
         Set-UserPath ((@(Split-PathList (Get-UserPath)) + $BinDir) -join ';')
-        Write-Host "opencomply: added $BinDir to your user PATH (open a new terminal to use 'opencomply')"
+        Write-Host "opencomply: added $BinDir to your user PATH. 'opencomply' works in this window now; other open windows (including terminals inside VS Code or Claude Code) see it after that app is restarted."
     }
     if (-not ($env:Path -split ';' | Where-Object { $_.TrimEnd('\') -eq $BinDir.TrimEnd('\') })) {
         $env:Path = "$env:Path;$BinDir"
