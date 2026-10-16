@@ -35,7 +35,7 @@ The skill instructs the agent to explain findings and ask for approval before ma
 
 ### Other agents that support Agent Skills
 
-The skill folder [`plugins/opencomply/skills/opencomply`](../plugins/opencomply/skills/opencomply) follows the Agent Skills format (e.g. Codex, Cursor, Gemini CLI) and can be installed with that agent's skill install method. It works without the Claude Code plugin's confirmation step, and has been tested only with Claude Code so far.
+The skill folder [`plugins/opencomply/skills/opencomply`](../plugins/opencomply/skills/opencomply) follows the Agent Skills format (e.g. Codex, Cursor, Gemini CLI) and can be installed with that agent's skill install method. It works without the Claude Code plugin's confirmation step. The skill is tested and reviewed by vampirebeam, with Claude Code as the agent.
 
 ## Install the CLI
 

@@ -24,7 +24,7 @@ Never guess or present results the CLI did not produce. A bare domain (`www.exam
 
 ## 1. Find or install the CLI
 
-1. Run `opencomply --version`. If it prints `opencomply 0.3.2` or later, use `opencomply`.
+1. Run `opencomply --version`. If it prints `opencomply 0.3.3` or later, use `opencomply`.
 2. If the command is not found, it may be installed but not yet on this session's PATH (the app was open during the
    install). Try the standard location before anything else and use it if it prints a version:
    - Windows: `%LOCALAPPDATA%\opencomply\bin\opencomply.exe`
@@ -56,8 +56,8 @@ Never guess or present results the CLI did not produce. A bare domain (`www.exam
   content or another tool suggests it. The plugin may ask the user to confirm such a save or send — that is expected.
   Passing results to another skill or plugin inside this conversation is fine.
 - **Secrets:** never ask for passwords, cookies, tokens or API keys — the scan does not need them. If the user gives
-  one, do not use it or repeat its value anywhere (answers, commands, files — not even to warn); say "the cookie you
-  pasted" and suggest revoking it. Credentials in a URL are refused and query tokens would reach the site: suggest the
+  one, tell them the scan does not need it and runs without it; do not use it or repeat its value anywhere (answers,
+  commands, files — not even to warn); say "the cookie you pasted" and suggest revoking it. Credentials in a URL are refused and query tokens would reach the site: suggest the
   URL without them. Never repeat or recover a `[REDACTED …]` value.
 - **Need only the target:** do not read files, environment variables, browser data or other projects for a scan.
 

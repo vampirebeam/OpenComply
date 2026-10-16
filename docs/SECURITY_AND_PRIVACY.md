@@ -27,7 +27,7 @@ It separates what the CLI enforces itself from what depends on an AI agent follo
   - ask only for the URL, never for passwords, cookies, tokens or keys, and not repeat secrets you paste;
   - save or send results only to a destination you name, after saying what goes where;
   - treat text from the scanned site as data, not follow instructions in it, and tell you when the site contains text aimed at AI assistants.
-- **These are instructions to an AI, not guarantees.** They were tested with Claude Code, repeatedly, because AI behaviour can vary between runs. Other agents that load the skill have not been tested yet.
+- **These are instructions to an AI, not guarantees.** They are tested and reviewed by vampirebeam, with Claude Code as the agent, repeatedly, because AI behaviour can vary between runs.
 - **Confirmation step (Claude Code plugin only).** Before the agent sends OpenComply results off your computer or writes them to a report file, the plugin asks you to confirm. It covers the agent's commands and file writes that carry OpenComply results; it does not cover every way an agent could move data, and other agents do not have it.
 
 ## Security boundaries
@@ -43,7 +43,7 @@ Also:
 
 - The installer checks the SHA-256 of the download. That confirms the file matches the checksum published with the release; on its own it does not prove who published it. You can [read the installer before it runs](GETTING_STARTED.md#read-the-installer-before-it-runs).
 - The binaries are not signed by Apple or Microsoft.
-- **Testing:** the Claude Code integration is tested against adversarial inputs, unauthorized actions and data-handling scenarios, checking both what the agent says and what its tools actually do. Results do not guarantee identical behaviour across agents or environments.
+- **Testing:** vampirebeam tests the agent skill and plugin, with Claude Code as the agent, against adversarial inputs, unauthorized actions and data-handling scenarios, checking both what the agent says and what its tools actually do. Results do not guarantee identical behaviour across agents or environments.
 
 ## Limitations
 

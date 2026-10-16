@@ -5,10 +5,10 @@
 <h3 align="center">เครื่องมือตรวจสอบความปลอดภัยของเว็บไซต์<br/>ระบุสิ่งที่ขาด วิธีแก้ไข และตำแหน่งที่ต้องแก้ไข ในรูปแบบที่ทั้งนักพัฒนาและ AI agent นำไปใช้ต่อได้</h3>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.2-f59e0b?style=flat-square" alt="Version 0.3.2" />
+  <img src="https://img.shields.io/badge/version-0.3.3-f59e0b?style=flat-square" alt="Version 0.3.3" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-22c55e?style=flat-square" alt="Apache-2.0 License" /></a>
   <img src="https://img.shields.io/badge/rust-1.90-0891b2?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.90" />
-  <img src="https://img.shields.io/badge/agent_skill-tested_with_Claude_Code-7C3AED?style=flat-square" alt="Agent skill tested with Claude Code" />
+  <img src="https://img.shields.io/badge/agent_skill-Agent_Skills_format-7C3AED?style=flat-square" alt="Agent skill in the Agent Skills format" />
 </p>
 
 
@@ -87,7 +87,7 @@ next: fix 3 · advice 1 (optional) · evidence: --format markdown
 
 - **ไม่มี telemetry** ไม่ต้องมีบัญชีหรือ API key CLI ไม่เก็บข้อมูลใดๆ และไม่แก้ไขไฟล์ของคุณ
 - การสแกนส่งเฉพาะคำขอ GET ไปยัง URL ที่ระบุและ `http://` ของ URL เดียวกัน ปฏิเสธที่อยู่ภายในเว้นแต่คุณอนุญาต และปฏิเสธ cloud metadata เสมอ
-- เมื่อใช้ AI agent สิ่งที่ agent อ่านจะถูกส่งไปยังผู้ให้บริการโมเดลของ agent นั้น agent skill ทดสอบแล้วกับ Claude Code แต่พฤติกรรมของ AI อาจต่างกันในแต่ละครั้ง การป้องกันของ CLI เองจึงไม่ขึ้นกับ AI
+- เมื่อใช้ AI agent สิ่งที่ agent อ่านจะถูกส่งไปยังผู้ให้บริการโมเดลของ agent นั้น agent skill ทดสอบและตรวจผลโดย vampirebeam โดยใช้ Claude Code เป็น agent แต่พฤติกรรมของ AI อาจต่างกันในแต่ละครั้ง การป้องกันของ CLI เองจึงไม่ขึ้นกับ AI
 
 [Security and privacy](docs/SECURITY_AND_PRIVACY.md) · [นโยบายความปลอดภัย](SECURITY.md)
 

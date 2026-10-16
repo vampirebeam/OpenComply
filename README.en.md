@@ -5,10 +5,10 @@
 <h3 align="center">Website security checks<br/>that tell you what's missing, how to fix it and where, in a form developers and AI agents can build on.</h3>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.2-f59e0b?style=flat-square" alt="Version 0.3.2" />
+  <img src="https://img.shields.io/badge/version-0.3.3-f59e0b?style=flat-square" alt="Version 0.3.3" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-22c55e?style=flat-square" alt="Apache-2.0 License" /></a>
   <img src="https://img.shields.io/badge/rust-1.90-0891b2?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.90" />
-  <img src="https://img.shields.io/badge/agent_skill-tested_with_Claude_Code-7C3AED?style=flat-square" alt="Agent skill tested with Claude Code" />
+  <img src="https://img.shields.io/badge/agent_skill-Agent_Skills_format-7C3AED?style=flat-square" alt="Agent skill in the Agent Skills format" />
 </p>
 
 
@@ -87,7 +87,7 @@ The full output, how to read each line, the evidence report, JSON, grades and ex
 
 - **No telemetry**, no account, no API key. The CLI stores nothing and never changes your files.
 - A scan sends only GET requests to the URL you give and its `http://` version. Internal addresses are refused unless you allow them; cloud metadata always is.
-- When you use an AI agent, what it reads goes to that agent's model provider. The agent skill is tested with Claude Code; AI behaviour can vary, so the CLI's own protections never depend on it.
+- When you use an AI agent, what it reads goes to that agent's model provider. The agent skill is tested and reviewed by vampirebeam, with Claude Code as the agent; AI behaviour can vary, so the CLI's own protections never depend on it.
 
 [Security and privacy](docs/SECURITY_AND_PRIVACY.md) · [Security policy](SECURITY.md)
 

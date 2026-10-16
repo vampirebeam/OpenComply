@@ -8,7 +8,7 @@
             "timeout": 10,
             "if": "Bash(*opencomply*)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           }
         ]
       },
@@ -19,7 +19,7 @@
             "timeout": 10,
             "if": "PowerShell(*opencomply*)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           }
         ]
       },
@@ -30,61 +30,61 @@
             "timeout": 10,
             "if": "Write(*.md)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Write(*.markdown)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Write(*.json)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Write(*.txt)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Write(*.html)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Write(*.htm)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Write(*.csv)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Write(*.log)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Write(*.yaml)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Write(*.yml)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           }
         ]
       },
@@ -95,61 +95,61 @@
             "timeout": 10,
             "if": "Edit(*.md)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Edit(*.markdown)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Edit(*.json)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Edit(*.txt)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Edit(*.html)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Edit(*.htm)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Edit(*.csv)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Edit(*.log)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Edit(*.yaml)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           },
           {
             "timeout": 10,
             "if": "Edit(*.yml)",
             "type": "command",
-            "command": "opencomply guard --agent claude; exit 0"
+            "command": "opencomply guard --agent claude; env \"$HOME/.local/bin/opencomply\" guard --agent claude; exit 0"
           }
         ]
       }

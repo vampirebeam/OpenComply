@@ -1,7 +1,7 @@
 {
   "name": "opencomply",
   "displayName": "OpenComply",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Check a website's HTTP security headers with the OpenComply CLI: grade A+ to F, platform-aware fixes and the path to a higher grade.",
   "author": { "name": "vampirebeam", "url": "https://github.com/vampirebeam" },
   "homepage": "https://github.com/vampirebeam/OpenComply",
