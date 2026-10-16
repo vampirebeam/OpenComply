@@ -48,6 +48,29 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-targets --locked
 
+  # Line coverage of the whole workspace must stay at or above the floor; the tool is a pinned, checksummed prebuilt.
+  coverage:
+    name: coverage
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COV_URL: https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz
+      COV_SHA256: 3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install cargo-llvm-cov
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL "$COV_URL" -o "$RUNNER_TEMP/cov.tgz"
+          echo "$COV_SHA256  $RUNNER_TEMP/cov.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/cov.tgz" -C "$HOME/.cargo/bin" cargo-llvm-cov
+          rustup component add llvm-tools-preview
+      - name: Coverage
+        run: cargo llvm-cov --workspace --all-targets --locked --summary-only --fail-under-lines 90
+
   supply-chain:
     name: supply chain (cargo-deny)
     runs-on: ubuntu-latest

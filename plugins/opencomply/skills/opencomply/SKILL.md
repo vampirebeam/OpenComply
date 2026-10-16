@@ -24,7 +24,7 @@ Never guess or present results the CLI did not produce. A bare domain (`www.exam
 
 ## 1. Find or install the CLI
 
-1. Run `opencomply --version`. If it prints `opencomply 0.3.4` or later, use `opencomply`.
+1. Run `opencomply --version`. If it prints `opencomply 0.3.5` or later, use `opencomply`.
 2. If the command is not found, it may be installed but not yet on this session's PATH (the app was open during the
    install). Try the standard location before anything else and use it if it prints a version:
    - Windows: `%LOCALAPPDATA%\opencomply\bin\opencomply.exe`

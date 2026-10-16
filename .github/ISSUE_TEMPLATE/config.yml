@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability in OpenComply
+    url: https://github.com/vampirebeam/OpenComply/security/advisories/new
+    about: Report privately. Do not open a public issue (see SECURITY.md).

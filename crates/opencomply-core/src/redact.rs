@@ -45,7 +45,7 @@ static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
         ("jwt", r"\b(eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})", 1),
         (
             "credential",
-            r#"(?i)\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)\s*[=:]\s*['"]?([^'"\s;,&]{4,})"#,
+            r#"(?i)\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)\s*[=:]\s*['"]?([^'"\s;,&\[][^'"\s;,&]{3,})"#,
             1,
         ),
     ]
@@ -164,6 +164,11 @@ mod tests {
         assert_eq!(
             redact("DB password=S3cr3t!x;"),
             "DB password=[REDACTED credential];"
+        );
+        // A cookie named like a credential is redacted once, not re-labelled by the credential pattern.
+        assert_eq!(
+            redact("set-cookie: XSRF-TOKEN=eyJpdiI6IjEyMyJ9abc"),
+            "set-cookie: XSRF-TOKEN=[REDACTED cookie value]"
         );
         assert_eq!(
             redact("define( 'DB_PASSWORD', 'p@ss w0rd' );"),

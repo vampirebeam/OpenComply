@@ -799,8 +799,13 @@ fn short(s: &str) -> String {
     truncate(&one_line(s), MAX_HINT_CHARS)
 }
 
+/// Plain Markdown text: HTML is escaped and `\` `[` `]` are backslash-escaped, so text from a site can never become a
+/// link or a remote image (T11).
 fn md_text(s: &str) -> String {
     one_line(s)
+        .replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -861,6 +866,43 @@ mod tests {
             .map(|(i, (st, sv))| finding(&format!("HDR-{i:03}"), *st, *sv))
             .collect();
         Report::new(Module::Headers, "https://example.com", findings)
+    }
+
+    // T11: link / image syntax from a site (evidence, or a reason that quotes it) never forms a live Markdown link or
+    // remote image: outside code spans every `[` is escaped.
+    #[test]
+    fn markdown_keeps_site_links_inert() {
+        let payload = r"PHP/8.1 ![t](https://evil.example/p.png) [x](https://evil.example/x) \[z](https://evil.example/z) `y`";
+        for with_reason in [false, true] {
+            let mut f = finding("HDR-010", Status::Fail, Severity::Low);
+            f.evidence[0].detail = format!("x-powered-by: {payload}");
+            if with_reason {
+                f.reason = Some(format!("value {payload}"));
+            }
+            let r = Report::new(Module::Headers, "https://example.com", vec![f]);
+            let md = render(&r, Format::Markdown, true);
+            let mut outside = String::new();
+            for (i, part) in md.split('`').enumerate() {
+                if i % 2 == 0 {
+                    outside.push_str(part);
+                }
+            }
+            assert!(md.contains("evil.example"), "{md}");
+            let unescaped = outside
+                .char_indices()
+                .filter(|&(i, c)| {
+                    c == '['
+                        && outside[..i]
+                            .chars()
+                            .rev()
+                            .take_while(|&b| b == '\\')
+                            .count()
+                            % 2
+                            == 0
+                })
+                .count();
+            assert_eq!(unescaped, 0, "{md}");
+        }
     }
 
     #[test]

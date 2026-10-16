@@ -1,5 +1,6 @@
-# Release binaries for a tag vX.Y.Z: build on each OS, package with LICENSE / NOTICE / third-party notices, attach to a
-# DRAFT release with a .sha256 per archive. The maintainer reviews and publishes the draft by hand.
+# Release binaries for a tag vX.Y.Z: build on each OS, package with LICENSE / NOTICE / third-party notices and a
+# CycloneDX SBOM of that binary, attach to a DRAFT release with a .sha256 per archive. The maintainer reviews and
+# publishes the draft by hand.
 # Runs on a pushed tag, or by hand for an existing tag (workflow_dispatch) — the tag's code is built, never moved.
 # Only the release jobs get `contents: write` (to upload release files); no other secrets, no signing keys in CI —
 # official rule packs must already carry their signature in the tag (checked before anything is built).
@@ -72,9 +73,42 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  # One SBOM per target (dependencies differ by OS), from Cargo.lock metadata only; the tool is a pinned, checksummed
+  # prebuilt binary.
+  sbom:
+    name: SBOM
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CDX_URL: https://github.com/CycloneDX/cyclonedx-rust-cargo/releases/download/cargo-cyclonedx-0.5.9/cargo-cyclonedx-x86_64-unknown-linux-musl.tar.xz
+      CDX_SHA256: 9bd3e599314f50810c9d98b8b68a617ff9d3cc20873968d90b29d121f6b226ff
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - name: Generate
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL "$CDX_URL" -o "$RUNNER_TEMP/cdx.txz"
+          echo "$CDX_SHA256  $RUNNER_TEMP/cdx.txz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/cdx.txz" -C "$RUNNER_TEMP" --strip-components=1 --wildcards '*/cargo-cyclonedx'
+          mkdir _sbom
+          for t in x86_64-unknown-linux-gnu x86_64-pc-windows-msvc aarch64-apple-darwin; do
+            "$RUNNER_TEMP/cargo-cyclonedx" cyclonedx -q --manifest-path crates/opencomply-cli/Cargo.toml \
+              --describe binaries --target "$t" --target-in-filename --spec-version 1.5 --format json --no-build-deps
+            mv "crates/opencomply-cli/opencomply_bin_$t.cdx.json" "_sbom/$t.cdx.json"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: _sbom/
+          if-no-files-found: error
+          retention-days: 1
+
   build:
     name: build (${{ matrix.target }})
-    needs: create
+    needs: [create, sbom]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
@@ -108,6 +142,10 @@ jobs:
             cp _wf/THIRD-PARTY-NOTICES.txt THIRD-PARTY-NOTICES.txt
           fi
           rm -rf _wf
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sbom
+          path: _sbom
       - name: Build
         run: cargo build --release --locked -p opencomply-cli
       - name: Package
@@ -119,6 +157,7 @@ jobs:
           name="opencomply-${TAG}-${TARGET}"
           mkdir "$name"
           cp "target/release/opencomply${EXT}" LICENSE NOTICE README.md THIRD-PARTY-NOTICES.txt "$name/"
+          cp "_sbom/${TARGET}.cdx.json" "$name/sbom.cdx.json"
           if [ "$RUNNER_OS" = "Windows" ]; then
             7z a -tzip "$name.zip" "$name" > /dev/null
             archive="$name.zip"
