@@ -1,6 +1,6 @@
 ---
 name: opencomply
-description: Check a website with the OpenComply CLI and explain the result. This version checks HTTP security headers — grade A+ to F, what to fix, where to fix it for the detected platform (Cloudflare, Vercel, nginx, Next.js, WordPress…) and the path to a higher grade. Use when the user asks to check, scan or grade a website or its security, security headers, CSP, HSTS, clickjacking, Referrer-Policy, Permissions-Policy, cookie flags or HTTPS redirects; when they ask to check SSL/TLS or a repository (to say plainly what is and is not covered); or when they ask what OpenComply or this plugin sends, stores or collects.
+description: Check a website with the OpenComply CLI and explain the result. This version checks HTTP security headers — grade A+ to F, what to fix, where to fix it for the detected platform (Cloudflare, Vercel, nginx, Next.js, WordPress…) and the path to a higher grade. Use when the user asks to check, scan or grade a website or its security, security headers, CSP, HSTS, clickjacking, Referrer-Policy, Permissions-Policy, cookie flags or HTTPS redirects; when they ask to check SSL/TLS, certificates or a repository (use it before any other tool, to say plainly what is and is not covered); or when they ask what OpenComply or this plugin sends, stores or collects.
 license: Apache-2.0
 metadata:
   author: vampirebeam
@@ -11,19 +11,20 @@ compatibility: Needs network access to the target URL. On first use it installs 
 # OpenComply
 
 OpenComply is a CLI that checks targets against versioned, signed rules. **The CLI decides every result; you explain it.**
+Answer in the language the user wrote in, even though this skill and the CLI output are in English.
 
 ## Scope — what this version checks
 
 | Request | Do |
 |---|---|
 | A website, its security headers, or "is my site secure?" | Headers check — read [reference/HEADERS.md](reference/HEADERS.md); say it covers HTTP security headers only |
-| Anything else (SSL/TLS, certificates, ports, malware, vulnerabilities, a repository's standards) | Run `opencomply standards` — it lists what this version checks. If it is not listed, say plainly OpenComply does not check it, offer what it does check, and keep any general advice of your own clearly separate from OpenComply results |
+| Anything else (SSL/TLS, certificates, ports, malware, vulnerabilities, a repository's standards) | Run `opencomply standards` — it lists what this version checks. If it is not listed, say plainly OpenComply does not check it, offer what it does check, and keep any general advice of your own clearly separate from OpenComply results. Do not probe it yourself (curl, openssl, sockets) unless the user asks for that afterwards |
 
 Never guess or present results the CLI did not produce. A bare domain (`www.example.com`) is fine — the CLI assumes `https://`.
 
 ## 1. Find or install the CLI
 
-1. Run `opencomply --version`. If it prints `opencomply 0.3.1` or later, use `opencomply`.
+1. Run `opencomply --version`. If it prints `opencomply 0.3.2` or later, use `opencomply`.
 2. If the command is not found, it may be installed but not yet on this session's PATH (the app was open during the
    install). Try the standard location before anything else and use it if it prints a version:
    - Windows: `%LOCALAPPDATA%\opencomply\bin\opencomply.exe`
