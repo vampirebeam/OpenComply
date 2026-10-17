@@ -226,10 +226,11 @@ mod tests {
         l.local_addr().unwrap().port()
     }
 
+    /// Windows reports a refused local connection only after ~2 s (it retries the SYN), so the request timeout must stay
+    /// well above that or "refused" would read as "timed out"; a stalled server still times out.
     async fn probe(url: &str) -> Option<InsecureProbe> {
         let limits = Limits {
-            io_timeout: std::time::Duration::from_secs(1),
-            connect_timeout: std::time::Duration::from_secs(1),
+            io_timeout: std::time::Duration::from_secs(4),
             ..Limits::default()
         };
         let policy = NetPolicy {
