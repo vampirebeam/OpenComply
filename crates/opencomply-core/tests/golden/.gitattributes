@@ -1,0 +1,2 @@
+# Golden output is compared byte for byte: never convert line endings (CRLF on Windows checkouts).
+* -text
