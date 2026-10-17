@@ -25,4 +25,5 @@ rustc-ice-*.txt
 .claude
 *.txt
 !THIRD-PARTY-NOTICES.txt
+!crates/opencomply-core/tests/golden/*.txt
 *.png

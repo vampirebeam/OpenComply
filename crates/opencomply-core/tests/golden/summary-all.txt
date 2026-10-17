@@ -1,0 +1,46 @@
+headers https://example.com/ verdict=fail grade=D score=58 pass=5 fail=2 unknown=0 review=3 no_evidence=0 n/a=0 advice=1 platform=cloudflare+nginx+php+wordpress
+to C: HDR-002 +25 required → B 83
+to A+: HDR-002 +25 required · HDR-007 +7 required · HDR-010 +5 required → A+ 95
+  impact (HDR-002): Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes
+  impact (HDR-007): All http:// links and bookmarks are moved to https://; mixed http:// resources on the pages must be fixed
+  impact (HDR-010): None for users; only hides version details
+FAIL HDR-002 high Content-Security-Policy · involved
+  why: script-src allows 'unsafe-inline' without a nonce or hash, so injected inline scripts can run
+  fix: enforce a CSP whose script-src allows no inline or wildcard scripts
+  example: change only script-src: script-src 'self' 'nonce-<random-per-request>' https://cdn.example.com
+  how (cloudflare): Rules > Transform Rules > Modify Response Header > Set static: Content-Security-Policy
+  note (cloudflare): A static Transform Rule cannot add a per-request nonce; set the CSP in the app, use hashes, or a Worker
+  how (nginx): add_header Content-Security-Policy "..." always; nonces: set them in the app, or sub_filter with $request_id
+FAIL HDR-010 low Technology disclosure · quick
+  why: server, x-powered-by +1 tell attackers which software and version runs here
+  fix: remove X-Powered-By, version numbers and internal host names from headers and meta generator
+  how (nginx, preferred): server_tokens off; PHP: fastcgi_hide_header X-Powered-By; proxy: proxy_hide_header X-Powered-By;
+  how (php, preferred): php.ini: expose_php = Off
+  how (wordpress, preferred): php.ini expose_php = Off, and hide the server version on the web server
+  note (wordpress): meta generator: remove_action('wp_head', 'wp_generator') in the theme's functions.php
+REVIEW HDR-007 high HTTPS enforcement · moderate
+  why: http:// moves to https:// with a temporary redirect (302), which browsers do not remember
+  decide: Is the temporary redirect intentional? If not, make it 301 or 308.
+  example: http://example.com/ → 301 → https://example.com/
+  how (cloudflare): SSL/TLS > Edge Certificates > Always Use HTTPS: On
+  how (nginx): server { listen 80; server_name example.com; return 301 https://$host$request_uri; }
+REVIEW HDR-009 medium Cookie security · moderate
+  why: HttpOnly missing on theme, so page scripts can read it
+  decide: Does page JavaScript need to read these cookies? If not, add HttpOnly.
+  example: Set-Cookie: session=<value>; Path=/; Secure; HttpOnly; SameSite=Lax
+  how (php, preferred): php.ini: session.cookie_secure=1, session.cookie_httponly=1, session.cookie_samesite=Lax
+  how (wordpress, preferred): Core login cookies are HttpOnly; set FORCE_SSL_ADMIN true in wp-config.php and check plugin cookies
+REVIEW HDR-005 low Permissions-Policy · quick
+  why: camera=* lets every embedded site use it
+  decide: Do embedded sites need these features? If not, use =() or =(self).
+  example: Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  how (cloudflare): Rules > Transform Rules > Modify Response Header > Set static: Permissions-Policy
+  how (nginx): add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+PASS HDR-001 high Strict-Transport-Security
+  advice: add includeSubDomains once every subdomain serves HTTPS, so subdomains are protected too
+  example: Strict-Transport-Security: max-age=31536000; includeSubDomains
+PASS HDR-003 medium X-Content-Type-Options
+PASS HDR-006 medium Clickjacking protection
+PASS HDR-008 medium Security header syntax
+PASS HDR-004 low Referrer-Policy
+next: fix 2, decide 3 · advice 1 (optional) · evidence: --format markdown

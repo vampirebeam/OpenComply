@@ -199,3 +199,63 @@ fn oversize_input_is_rejected_before_parsing() {
         Err(LoadError::TooLarge { .. })
     ));
 }
+
+/// A custom pack is untrusted input: each of these mistakes is reported, never loaded. An empty allow-list would fail
+/// every site, an invalid header name could never match, and the rule count is bounded.
+#[test]
+fn malformed_custom_packs_are_reported() {
+    let rule = |i: usize| {
+        format!(
+            "\n[[rule]]\nid = \"HDR-{i:03}\"\nversion = \"1.0.0\"\ntitle = \"t\"\nseverity = \"low\"\nweight = 0\nfix_hint = \"f\"\nremediation = \"r\"\ncheck = {{ op = \"header_present\", header = \"x-a\" }}\n"
+        )
+    };
+    let head = "[pack]\nid = \"test-headers\"\nversion = \"1.0.0\"\nmodule = \"headers\"\n";
+    let too_many: String = std::iter::once(head.to_string())
+        .chain((0..=opencomply_core::rules::MAX_RULES).map(rule))
+        .collect();
+    let cases: Vec<(&str, String, &str)> = vec![
+        (
+            "empty allow-list",
+            VALID.replace(
+                r#"op = "header_equals", header = "x-content-type-options", value = "nosniff""#,
+                r#"op = "header_one_of", header = "x-content-type-options", values = []"#,
+            ),
+            "must not be empty",
+        ),
+        (
+            "header name is not an HTTP token",
+            VALID.replace(
+                r#"header = "x-content-type-options""#,
+                r#"header = "x content(type)""#,
+            ),
+            "valid HTTP token",
+        ),
+        (
+            "unknown platform id",
+            format!("{VALID}\n[rule.platforms.nosuchplatform]\nhow = \"x\"\n"),
+            "unknown platform id",
+        ),
+        (
+            "empty text",
+            VALID.replace(
+                r#"fix_hint = "add X-Content-Type-Options: nosniff""#,
+                r#"fix_hint = "   ""#,
+            ),
+            "must not be empty",
+        ),
+        ("no rules", head.to_string(), "no rules defined"),
+        ("too many rules", too_many, "too many rules"),
+        (
+            "header check in a TLS pack",
+            VALID.replace("module = \"headers\"", "module = \"tls\""),
+            "not allowed",
+        ),
+    ];
+    for (what, src, expected) in cases {
+        let found = issues(&src);
+        assert!(
+            found.iter().any(|i| i.contains(expected)),
+            "{what}: expected \"{expected}\" in {found:?}"
+        );
+    }
+}

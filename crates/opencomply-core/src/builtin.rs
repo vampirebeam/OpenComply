@@ -27,6 +27,8 @@ pub(crate) fn run(check: Builtin, http: &HttpEvidence) -> Outcome {
         Builtin::HeaderSyntax => header_syntax(http),
         Builtin::Cookies => cookies(http),
         Builtin::InfoDisclosure => info_disclosure(http),
+        Builtin::PermissionsPolicy => permissions_policy(http),
+        Builtin::ContentTypeOptions => content_type_options(http),
     }
 }
 
@@ -42,6 +44,12 @@ fn hsts(http: &HttpEvidence) -> Outcome {
         return Outcome::missing("Strict-Transport-Security");
     };
     let detail = shown("strict-transport-security", &values);
+    if let Some(d) = repeated_directive(first) {
+        return Outcome::fail(
+            detail,
+            format!("{d} appears twice in HSTS, so browsers ignore the header"),
+        );
+    }
     match directive_value(first, "max-age").map(str::parse::<u64>) {
         None => Outcome::fail(detail, "HSTS has no max-age, so browsers ignore it".into()),
         Some(Err(_)) => Outcome::fail(
@@ -74,6 +82,18 @@ fn hsts(http: &HttpEvidence) -> Outcome {
                 .with_example(Some(example))
         }
     }
+}
+
+/// First directive named more than once in one HSTS value: such a header is invalid and browsers drop it entirely.
+fn repeated_directive(value: &str) -> Option<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    value
+        .split(';')
+        .filter_map(|p| {
+            let name = p.split('=').next()?.trim().to_ascii_lowercase();
+            (!name.is_empty()).then_some(name)
+        })
+        .find(|name| !seen.insert(name.clone()))
 }
 
 /// One CSP policy: directive name (lowercase) → source tokens. Only the first occurrence counts, as in browsers.
@@ -122,18 +142,45 @@ enum ScriptControl {
     Weak(String),
 }
 
-fn is_nonce_or_hash(t: &str) -> bool {
-    let t = t.to_ascii_lowercase();
-    ["'nonce-", "'sha256-", "'sha384-", "'sha512-"]
-        .iter()
-        .any(|p| t.starts_with(p))
+/// `'<prefix><value>'` with a non-empty base64 / base64url value: browsers ignore an empty or malformed one
+/// (`'nonce-'`), and then `'unsafe-inline'` in the same directive applies again.
+fn has_keyword_value(t: &str, prefixes: &[&str]) -> bool {
+    let lower = t.to_ascii_lowercase();
+    prefixes.iter().any(|p| {
+        lower
+            .strip_prefix(p)
+            .and_then(|r| r.strip_suffix('\''))
+            .is_some_and(|v| {
+                !v.is_empty()
+                    && v.bytes().all(|b| {
+                        b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'-' | b'_')
+                    })
+            })
+    })
 }
 
+fn is_nonce(t: &str) -> bool {
+    has_keyword_value(t, &["'nonce-"])
+}
+
+fn is_nonce_or_hash(t: &str) -> bool {
+    has_keyword_value(t, &["'nonce-", "'sha256-", "'sha384-", "'sha512-"])
+}
+
+/// A source that matches every site: `*`, a bare scheme (`https:`), or a host of `*` (`https://*`, `*:443`).
 fn is_wildcard_source(t: &str) -> bool {
-    matches!(
-        t.to_ascii_lowercase().as_str(),
+    let t = t.to_ascii_lowercase();
+    if matches!(
+        t.as_str(),
         "*" | "http:" | "https:" | "data:" | "blob:" | "filesystem:"
-    )
+    ) {
+        return true;
+    }
+    if t.starts_with('\'') {
+        return false;
+    }
+    let rest = t.split_once("://").map_or(t.as_str(), |(_, r)| r);
+    rest.split(['/', ':']).next() == Some("*")
 }
 
 /// The directive a browser applies, following CSP fallback: `first` → `script-src` → `default-src`.
@@ -258,10 +305,9 @@ fn csp_example(policy: &Policy) -> String {
 /// match), and a host list rejects the other site.
 fn trusts_nonce(policy: &Policy) -> bool {
     script_sources(policy).is_some_and(|(_, sources)| {
-        sources.iter().any(|s| {
-            s.to_ascii_lowercase().starts_with("'nonce-")
-                || s.eq_ignore_ascii_case("'strict-dynamic'")
-        })
+        sources
+            .iter()
+            .any(|s| is_nonce(s) || s.eq_ignore_ascii_case("'strict-dynamic'"))
     })
 }
 
@@ -335,6 +381,39 @@ fn csp(http: &HttpEvidence) -> Outcome {
         Some((r, p)) => Outcome::fail(detail, r).with_example(Some(csp_example(p))),
         None => Outcome::fail(detail, "CSP has no directives".into()),
     }
+}
+
+/// Exactly one `nosniff` passes. Any other token (empty, misspelt, or next to `nosniff`) fails, as before. `nosniff`
+/// repeated with nothing else is REVIEW: the Fetch spec uses the first value, but that is not confirmed in every
+/// browser, so it is not passed until compatibility tests show it.
+fn content_type_options(http: &HttpEvidence) -> Outcome {
+    let values = http.values("x-content-type-options");
+    if values.is_empty() {
+        return Outcome::missing("X-Content-Type-Options");
+    }
+    let detail = shown("x-content-type-options", &values);
+    let tokens: Vec<&str> = values
+        .iter()
+        .flat_map(|v| v.split(','))
+        .map(str::trim)
+        .collect();
+    if tokens.iter().any(|t| !t.eq_ignore_ascii_case("nosniff")) {
+        return Outcome::fail(
+            detail,
+            "X-Content-Type-Options is not exactly nosniff, so browsers may ignore it".into(),
+        );
+    }
+    if tokens.len() > 1 {
+        return Outcome::review(
+            detail,
+            "nosniff is sent more than once; not every browser is confirmed to accept the repeat"
+                .into(),
+        )
+        .with_question(
+            "Is X-Content-Type-Options added by two layers (app, server, CDN)? Send it once.",
+        );
+    }
+    Outcome::pass(detail)
 }
 
 const REFERRER_OK: [&str; 4] = [
@@ -455,6 +534,11 @@ fn https_redirect(http: &HttpEvidence) -> Outcome {
         Some(InsecureProbe::Unreachable(why)) => {
             Outcome::pass(format!("http:// not reachable ({why})"))
         }
+        Some(InsecureProbe::TimedOut(why)) => Outcome::review(
+            format!("http:// did not answer ({why})"),
+            "http:// timed out, so it is unclear whether port 80 is closed or only slow".into(),
+        )
+        .with_question("Is port 80 closed on purpose? If it serves the site, redirect it to https:// with 301."),
         Some(InsecureProbe::Responded { chain, final_url }) => {
             let Some(first) = chain.first() else {
                 return Outcome::unknown("the http:// check returned no response".into());
@@ -538,6 +622,78 @@ fn deprecated_advice(http: &HttpEvidence) -> Option<String> {
     ))
 }
 
+const PERMISSIONS_OLD_SYNTAX: &str =
+    "Permissions-Policy uses the old Feature-Policy syntax, so browsers ignore it";
+
+/// Entries of a Permissions-Policy value (`feature=allowlist`), empty ones dropped.
+fn permissions_entries(value: &str) -> impl Iterator<Item = &str> {
+    value.split(',').map(str::trim).filter(|e| !e.is_empty())
+}
+
+/// True when an entry is not `feature=allowlist` with a lowercase feature name (e.g. Feature-Policy's `camera 'none'`):
+/// browsers then drop the whole header.
+fn permissions_old_syntax(value: &str) -> bool {
+    permissions_entries(value).any(|e| {
+        let (k, _) = e.split_once('=').unwrap_or((e, ""));
+        !e.contains('=')
+            || k.is_empty()
+            || !k
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    })
+}
+
+/// Permissions-Policy must be valid and turn something off. An allowlist of `*` (or `(*)`) lets every embedded site
+/// use the feature — wider than the browser default (`self`) — so it is REVIEW, not PASS.
+fn permissions_policy(http: &HttpEvidence) -> Outcome {
+    let values = http.values("permissions-policy");
+    if values.is_empty() {
+        return Outcome::missing("Permissions-Policy");
+    }
+    let detail = shown("permissions-policy", &values);
+    if values.iter().any(|v| permissions_old_syntax(v)) {
+        return Outcome::fail(detail, PERMISSIONS_OLD_SYNTAX.into());
+    }
+    let entries: Vec<&str> = values.iter().flat_map(|v| permissions_entries(v)).collect();
+    if entries.is_empty() {
+        return Outcome::fail(
+            detail,
+            "Permissions-Policy is empty, so no browser feature is turned off".into(),
+        );
+    }
+    let open: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| {
+            let (k, v) = e.split_once('=')?;
+            let list = v.trim().trim_start_matches('(').trim_end_matches(')');
+            list.split_ascii_whitespace()
+                .any(|t| t == "*")
+                .then_some(k.trim())
+        })
+        .collect();
+    if !open.is_empty() {
+        // Feature names stay whole (they are what the reader searches for): two at most, then a count.
+        let named = open
+            .iter()
+            .take(2)
+            .map(|f| format!("{f}=*"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let who = match open.len() {
+            0..=2 => named,
+            n => format!("{named} +{}", n - 2),
+        };
+        let reason = if open.len() == 1 {
+            format!("{who} lets every embedded site use it")
+        } else {
+            format!("{who} let every embedded site use them")
+        };
+        return Outcome::review(detail, reason)
+            .with_question("Do embedded sites need these features? If not, use =() or =(self).");
+    }
+    Outcome::pass(detail)
+}
+
 fn header_syntax(http: &HttpEvidence) -> Outcome {
     let present: Vec<&str> = SECURITY_HEADERS
         .iter()
@@ -563,18 +719,12 @@ fn header_syntax(http: &HttpEvidence) -> Outcome {
             problems.push(format!("{h} is sent more than once with different values"));
         }
     }
-    if let Some(first) = http.values("strict-transport-security").first() {
-        let max_age_count = first
-            .split(';')
-            .filter(|p| {
-                p.split('=')
-                    .next()
-                    .is_some_and(|k| k.trim().eq_ignore_ascii_case("max-age"))
-            })
-            .count();
-        if max_age_count > 1 {
-            problems.push("max-age appears twice in HSTS, so browsers ignore it".into());
-        }
+    if let Some(d) = http
+        .values("strict-transport-security")
+        .first()
+        .and_then(|v| repeated_directive(v))
+    {
+        problems.push(format!("{d} appears twice in HSTS, so browsers ignore it"));
     }
     for v in http.values("content-security-policy") {
         for d in duplicate_directives(v) {
@@ -583,25 +733,12 @@ fn header_syntax(http: &HttpEvidence) -> Outcome {
             ));
         }
     }
-    for v in http.values("permissions-policy") {
-        let bad = v
-            .split(',')
-            .map(str::trim)
-            .filter(|e| !e.is_empty())
-            .any(|e| {
-                let (k, _) = e.split_once('=').unwrap_or((e, ""));
-                !e.contains('=')
-                    || k.is_empty()
-                    || !k
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-            });
-        if bad {
-            problems.push(
-                "Permissions-Policy uses the old Feature-Policy syntax, so browsers ignore it"
-                    .into(),
-            );
-        }
+    if http
+        .values("permissions-policy")
+        .iter()
+        .any(|v| permissions_old_syntax(v))
+    {
+        problems.push(PERMISSIONS_OLD_SYNTAX.into());
     }
     let detail = format!("checked: {}", present.join(", "));
     match problems.split_first() {
@@ -903,14 +1040,15 @@ fn cookies(http: &HttpEvidence) -> Outcome {
     }
     let not_secure_pred = |c: &Cookie| !c.secure;
     let n = flagged_names(&cookies, &not_secure_pred).len();
-    if http.https && n > 0 {
+    if n > 0 {
         let (hint, who, note) = cookie_guidance(&cookies, &not_secure_pred);
         let they_are = if n == 1 { "it is" } else { "they are" };
-        return Outcome::fail(
-            detail,
-            format!("Secure missing on {who}, so {they_are} also sent over http://{note}"),
-        )
-        .with_layers(hint);
+        let reason = if http.https {
+            format!("Secure missing on {who}, so {they_are} also sent over http://{note}")
+        } else {
+            format!("Secure missing on {who} and the page is http://, so {they_are} sent unencrypted{note}")
+        };
+        return Outcome::fail(detail, reason).with_layers(hint);
     }
     if let Some(outcome) = cached_session_cookies(http, &cookies, &detail) {
         return outcome;
@@ -928,11 +1066,22 @@ fn cookies(http: &HttpEvidence) -> Outcome {
         )
         .with_layers(hint);
     }
-    Outcome::pass(detail)
+    // Not every browser defaults a cookie without SameSite to Lax: advice only, set where the app creates it.
+    let no_same_site = flagged_names(&cookies, &|c: &Cookie| {
+        c.same_site.is_none() && infra_platform(&c.name).is_none()
+    });
+    let advice = (!no_same_site.is_empty()).then(|| {
+        format!(
+            "add SameSite=Lax to {}, so browsers that do not default to Lax also limit cross-site requests",
+            short_list(&no_same_site)
+        )
+    });
+    Outcome::pass(detail).with_advice(advice)
 }
 
-const TECH_HEADERS: [&str; 6] = [
+const TECH_HEADERS: [&str; 7] = [
     "x-powered-by",
+    "x-redirect-by",
     "x-aspnet-version",
     "x-aspnetmvc-version",
     "x-generator",
@@ -986,11 +1135,23 @@ fn generator_platform(content: &str) -> Option<&'static str> {
         .map(|p| p.id)
 }
 
+/// `Server` shows a version after `/` (`nginx/1.24`) or as a dotted number elsewhere (`Apache 2.4.57`,
+/// `Jetty(9.4.44)`, `v1.2`). A bare number is not counted: CDN node names such as `BunnyCDN-AB1-0042` carry one.
 fn has_version(server: &str) -> bool {
-    server
+    let after_slash = server
         .split('/')
         .skip(1)
-        .any(|rest| rest.trim_start().starts_with(|c: char| c.is_ascii_digit()))
+        .any(|rest| rest.trim_start().starts_with(|c: char| c.is_ascii_digit()));
+    after_slash
+        || server
+            .split(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | ';' | ',' | '-' | '_'))
+            .any(|w| {
+                let w = w.strip_prefix(['v', 'V']).unwrap_or(w);
+                let digits = w.bytes().take_while(u8::is_ascii_digit).count();
+                digits > 0
+                    && w.as_bytes().get(digits) == Some(&b'.')
+                    && w.as_bytes().get(digits + 1).is_some_and(u8::is_ascii_digit)
+            })
 }
 
 /// True when the value carries a version: a word that starts with a digit (`6.5.2`, `11`, `PHP/8.1` → `8.1`,

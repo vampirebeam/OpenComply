@@ -8,7 +8,7 @@ mod guard;
 use std::io::{Read, Write};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use opencomply_core::redact::redact;
+use opencomply_core::redact::{mark_site_labels, redact};
 use opencomply_core::rules::{LoadError, RulePack, MAX_PACK_BYTES};
 use opencomply_core::schema;
 use opencomply_core::signing::{TrustedKey, MAX_SIGNATURE_FILE_BYTES};
@@ -148,12 +148,10 @@ fn with_scheme(url: &str) -> String {
 }
 
 /// Diagnostics can quote the target URL or a server's reply (e.g. a network error naming `…?token=…`): they get the
-/// same secret redaction and control-character stripping as the report before reaching the terminal or an agent.
+/// same secret redaction and control / invisible character handling as the report before reaching the terminal or an
+/// agent.
 fn safe(text: &str) -> String {
-    redact(text)
-        .chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
+    opencomply_core::plain_text(&redact(&mark_site_labels(text)))
 }
 
 /// Runs one scan on a single-threaded runtime; scanner warnings go to stderr so stdout stays the report.

@@ -37,8 +37,10 @@ pub struct RedirectHop {
 /// Result of requesting the `http://` version of the target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InsecureProbe {
-    /// Nothing answered on `http://` (closed port, refused, timed out).
+    /// `http://` refused the connection: nothing is served there.
     Unreachable(String),
+    /// `http://` gave no answer in time: a firewall dropping port 80, or a slow server — one probe cannot tell.
+    TimedOut(String),
     /// Every response in order; `final_url` is where the chain ended.
     Responded {
         chain: Vec<RedirectHop>,

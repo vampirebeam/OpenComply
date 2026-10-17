@@ -106,6 +106,25 @@ async fn hostname_resolving_to_loopback_is_an_invalid_target() {
     assert!(err.to_string().contains("private or reserved"), "{err}");
 }
 
+/// The same name with private targets allowed: the resolver hands over the allowed addresses and the request is made
+/// to them (the path every public host name takes).
+#[tokio::test]
+async fn hostname_resolves_to_allowed_addresses() {
+    let base = serve().await;
+    let port = base.rsplit(':').next().unwrap();
+    let client = SafeClient::new(&Limits::default(), private_ok()).unwrap();
+    let r = client
+        .fetch(
+            &format!("http://localhost:{port}/final"),
+            follow(),
+            &deadline(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.status, 200);
+    assert_eq!(r.body.as_deref(), Some("hello"));
+}
+
 #[tokio::test]
 async fn redirect_chain_is_recorded() {
     let base = serve().await;

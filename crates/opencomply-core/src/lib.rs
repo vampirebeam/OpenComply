@@ -34,7 +34,8 @@ pub use platform::{
 };
 pub use registry::{Provenance, RegistryError, RuleRegistry, Version, MAX_PACKS, MAX_TOTAL_RULES};
 pub use render::{
-    render, render_with, Format, RenderOptions, MAX_EXAMPLE_CHARS, MAX_HINT_CHARS, MAX_NOTE_CHARS,
+    plain_text, render, render_with, Format, RenderOptions, MAX_EXAMPLE_CHARS, MAX_HINT_CHARS,
+    MAX_NOTE_CHARS,
 };
 pub use report::{ExitCode, FailOn, Report, RulePackRef, Summary, Verdict, REPORT_SCHEMA_VERSION};
 pub use scanner::{Limits, Scanner, Target};

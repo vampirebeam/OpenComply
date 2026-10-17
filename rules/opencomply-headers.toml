@@ -3,7 +3,7 @@
 
 [pack]
 id = "opencomply-headers"
-version = "1.1.0"
+version = "1.2.0"
 module = "headers"
 
 [[rule]]
@@ -96,14 +96,15 @@ note = "Webflow pages contain inline scripts; start with Report-Only"
 
 [[rule]]
 id = "HDR-003"
-version = "1.1.0"
+version = "1.2.0"
 title = "X-Content-Type-Options"
 severity = "medium"
 weight = 10
 effort = "quick"
 group = "response-headers"
-check = { op = "header_equals", header = "x-content-type-options", value = "nosniff" }
-fix_hint = "send X-Content-Type-Options: nosniff"
+check = { op = "builtin", name = "content_type_options" }
+fix_hint = "send X-Content-Type-Options: nosniff, once"
+review_question = "Is X-Content-Type-Options added by two layers (app, server, CDN)? Send it once."
 example_fix = "X-Content-Type-Options: nosniff"
 upgrade_impact = "Files served with a wrong Content-Type (e.g. scripts as text/plain) stop loading"
 remediation = "nosniff stops browsers from guessing a file's type, so an uploaded text or image file cannot be run as a script or stylesheet. The value must be exactly nosniff."
@@ -171,15 +172,16 @@ how = "Set it on the web server or CDN in front of WordPress"
 
 [[rule]]
 id = "HDR-005"
-version = "1.1.0"
+version = "1.2.0"
 title = "Permissions-Policy"
 severity = "low"
 weight = 5
 html_only = true
 effort = "quick"
 group = "response-headers"
-check = { op = "header_present", header = "permissions-policy" }
-fix_hint = "send a Permissions-Policy that turns off features the site does not use"
+check = { op = "builtin", name = "permissions_policy" }
+fix_hint = "send a valid Permissions-Policy that turns off features the site does not use"
+review_question = "Do embedded sites need these features? If not, use =() or =(self)."
 example_fix = "Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()"
 upgrade_impact = "Features not listed (camera, location, payment) stop working, including in embedded frames"
 remediation = "Permissions-Policy turns off browser features (camera, microphone, location, payment) the site does not use, so injected or embedded code cannot use them. List only features the site needs with (self)."

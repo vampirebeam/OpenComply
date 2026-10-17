@@ -198,6 +198,8 @@ pub enum Builtin {
     HeaderSyntax,
     Cookies,
     InfoDisclosure,
+    PermissionsPolicy,
+    ContentTypeOptions,
 }
 
 impl Check {

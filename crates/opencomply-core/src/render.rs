@@ -719,10 +719,34 @@ fn md_passed(out: &mut String, passed: &[&Finding]) {
     }
 }
 
+/// Characters that change how text is shown without being seen: bidi overrides / isolates (reorder text), zero-width
+/// and joiner characters, line / paragraph separators, BOM, soft hyphen, interlinear annotation and tag characters.
+fn is_invisible(c: char) -> bool {
+    matches!(c as u32,
+        0xAD | 0x61C | 0x180E | 0x200B..=0x200F | 0x2028 | 0x2029 | 0x202A..=0x202E
+        | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB | 0xE0000..=0xE007F)
+}
+
+/// One line of plain text: control characters (C0, DEL, C1) become spaces, invisible ones become a visible
+/// `<U+XXXX>` so the evidence still shows they were there. Other characters (homoglyphs included) are kept as sent.
+pub fn plain_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            out.push(' ');
+        } else if is_invisible(c) {
+            let _ = write!(out, "<U+{:04X}>", c as u32);
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn strip_controls(r: &mut Report) {
     fn clean(s: &mut String) {
-        if s.chars().any(char::is_control) {
-            *s = one_line(s);
+        if s.chars().any(|c| c.is_control() || is_invisible(c)) {
+            *s = plain_text(s);
         }
     }
     fn clean_opt(s: &mut Option<String>) {
@@ -764,6 +788,13 @@ fn strip_controls(r: &mut Report) {
         clean(&mut p.version);
         clean_opt(&mut p.signed_by);
     }
+    if let Some(g) = &mut r.grade {
+        g.capped_by.iter_mut().for_each(clean);
+        for s in g.upgrades.iter_mut().flat_map(|u| &mut u.steps) {
+            clean(&mut s.rule_id);
+            clean_opt(&mut s.impact);
+        }
+    }
 }
 
 fn why(f: &Finding) -> Option<String> {
@@ -790,29 +821,66 @@ fn evidence_cell(f: &Finding) -> String {
 }
 
 fn one_line(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
+    plain_text(s)
 }
 
 fn short(s: &str) -> String {
     truncate(&one_line(s), MAX_HINT_CHARS)
 }
 
-/// Plain Markdown text: HTML is escaped and `\` `[` `]` are backslash-escaped, so text from a site can never become a
-/// link or a remote image (T11).
-fn md_text(s: &str) -> String {
+/// A word a GFM renderer would turn into a link by itself: `scheme://host…`, `www.host…` or `name@host`.
+fn autolinks(word: &str) -> bool {
+    let lower = word.to_ascii_lowercase();
+    let alnum_at = |s: &str, i: usize| s[i..].chars().next().is_some_and(char::is_alphanumeric);
+    let url = lower
+        .match_indices("://")
+        .any(|(i, _)| alnum_at(&lower, i + 3));
+    let www = lower.match_indices("www.").any(|(i, _)| {
+        lower[..i]
+            .chars()
+            .last()
+            .is_none_or(|c| !c.is_alphanumeric())
+            && alnum_at(&lower, i + 4)
+    });
+    let email = lower.match_indices('@').any(|(i, _)| {
+        lower[..i].chars().last().is_some_and(char::is_alphanumeric) && alnum_at(&lower, i + 1)
+    });
+    url || www || email
+}
+
+/// Plain Markdown text, so text from a site can never become a link, a remote image or HTML (T11): HTML is escaped,
+/// `\` `[` `]` are backslash-escaped, words a renderer would autolink are shown as code, and in a table cell `|` is
+/// escaped so it cannot add a cell.
+fn md_inline(s: &str, cell: bool) -> String {
     one_line(s)
-        .replace('\\', "\\\\")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+        .split(' ')
+        .map(|w| {
+            if autolinks(w) {
+                return md_code(w);
+            }
+            let w = w
+                .replace('\\', "\\\\")
+                .replace('[', "\\[")
+                .replace(']', "\\]")
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            if cell {
+                w.replace('|', "\\|")
+            } else {
+                w
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn md_text(s: &str) -> String {
+    md_inline(s, false)
 }
 
 fn md_cell(s: &str) -> String {
-    md_text(s).replace('|', "\\|")
+    md_inline(s, true)
 }
 
 fn md_code(s: &str) -> String {
@@ -1039,7 +1107,8 @@ mod tests {
             md.contains("| Rule | Version | Severity | Effort | Finding | Why | Evidence | Fix | Example | Where to fix |")
         );
         assert!(md.contains("| HDR-000 | 1.0.0 | high | — |"));
-        assert!(md.contains("GET https://example.com `HDR-000 evidence`"));
+        // The source URL is shown as code so a Markdown viewer cannot turn it into a link (T11).
+        assert!(md.contains("GET `https://example.com` `HDR-000 evidence`"));
     }
 
     #[test]

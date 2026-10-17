@@ -48,7 +48,8 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-targets --locked
 
-  # Line coverage of the whole workspace must stay at or above the floor; the tool is a pinned, checksummed prebuilt.
+  # Line coverage of the whole workspace and of each critical file must stay at or above its floor; the tool is a
+  # pinned, checksummed prebuilt.
   coverage:
     name: coverage
     if: github.event_name != 'schedule'
@@ -69,7 +70,28 @@ jobs:
           tar -xzf "$RUNNER_TEMP/cov.tgz" -C "$HOME/.cargo/bin" cargo-llvm-cov
           rustup component add llvm-tools-preview
       - name: Coverage
-        run: cargo llvm-cov --workspace --all-targets --locked --summary-only --fail-under-lines 90
+        run: cargo llvm-cov --workspace --all-targets --locked --summary-only --fail-under-lines 94
+      # Files that decide results or guard output, secrets and network access have their own line floor.
+      - name: Coverage per file
+        run: |
+          cargo llvm-cov report --summary-only | awk '
+          BEGIN {
+            split("builtin evaluate grade redact registry render rules", core, " ")
+            for (i in core) min["opencomply-core/src/" core[i] ".rs"] = 95
+            min["opencomply-cli/src/guard.rs"] = 95
+            min["opencomply-core/src/signing.rs"] = 94
+            min["opencomply-http/src/lib.rs"] = 93
+            min["opencomply-headers/src/lib.rs"] = 89
+          }
+          ($1 in min) {
+            seen[$1] = 1; pct = $10; sub(/%/, "", pct)
+            printf "%-36s %7s (min %d%%)\n", $1, $10, min[$1]
+            if (pct + 0 < min[$1]) bad = 1
+          }
+          END {
+            for (f in min) if (!(f in seen)) { print "missing from report: " f; bad = 1 }
+            exit bad
+          }'
 
   supply-chain:
     name: supply chain (cargo-deny)

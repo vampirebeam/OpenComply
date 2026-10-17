@@ -53,8 +53,8 @@ async fn plain_http_site_is_scanned_end_to_end() {
     assert_eq!(status("HDR-010"), Status::Fail);
     assert_eq!(
         status("HDR-009"),
-        Status::NeedsReview,
-        "cookie without HttpOnly over http"
+        Status::Fail,
+        "cookie without Secure on an http:// page is sent unencrypted"
     );
     let ids: Vec<&str> = r.platforms.iter().map(|p| p.id).collect();
     assert!(

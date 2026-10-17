@@ -52,14 +52,23 @@ fn insecure_url(url: &Url) -> Option<String> {
     Some(u.to_string())
 }
 
-fn closed(e: &Error) -> bool {
+/// What a failed `http://` request says about the port: a timeout (including a connect timeout) is told apart from a
+/// refused connection; other errors say nothing.
+fn closed(e: &Error) -> Option<InsecureProbe> {
+    let why = e.to_string();
     match e {
-        Error::Timeout { .. } => true,
+        Error::Timeout { .. } => Some(InsecureProbe::TimedOut(why)),
         Error::Network(m) => {
             let m = m.to_ascii_lowercase();
-            m.contains("connect") || m.contains("refused")
+            if m.contains("timed out") || m.contains("timeout") {
+                Some(InsecureProbe::TimedOut(why))
+            } else if m.contains("connect") || m.contains("refused") {
+                Some(InsecureProbe::Unreachable(why))
+            } else {
+                None
+            }
         }
-        _ => false,
+        _ => None,
     }
 }
 
@@ -70,8 +79,9 @@ fn responded(r: FetchResult) -> InsecureProbe {
     }
 }
 
-/// Follows the `http://` chain; if a later hop is refused (e.g. a blocked address), keeps the first response and
-/// where it points. Connection refused / timed out = nothing served over `http://`.
+/// Follows the `http://` chain. Any failure along it (refused, timed out, blocked address) may come from a later
+/// hop, so the first hop is then requested alone: its response and where it points decide, and only its own failure
+/// means nothing is served over `http://` (refused) or that it is unclear (timed out).
 async fn probe_insecure(
     client: &SafeClient,
     url: &str,
@@ -81,10 +91,8 @@ async fn probe_insecure(
         follow_redirects: true,
         read_body: false,
     };
-    match client.fetch(url, follow, deadline).await {
-        Ok(r) => return Some(responded(r)),
-        Err(e) if closed(&e) => return Some(InsecureProbe::Unreachable(e.to_string())),
-        Err(_) => {}
+    if let Ok(r) = client.fetch(url, follow, deadline).await {
+        return Some(responded(r));
     }
     let first = FetchOptions {
         follow_redirects: false,
@@ -103,8 +111,7 @@ async fn probe_insecure(
                 chain: r.chain,
             })
         }
-        Err(e) if closed(&e) => Some(InsecureProbe::Unreachable(e.to_string())),
-        Err(_) => None,
+        Err(e) => closed(&e),
     }
 }
 
@@ -191,17 +198,119 @@ mod tests {
         );
     }
 
+    /// One canned response per connection; `None` accepts and never answers (a stalled port 80).
+    async fn serve(response: Option<&'static str>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = sock.read(&mut buf).await;
+                    match response {
+                        Some(r) => {
+                            let _ = sock.write_all(r.as_bytes()).await;
+                        }
+                        None => tokio::time::sleep(std::time::Duration::from_secs(30)).await,
+                    }
+                });
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// A port nothing listens on (bound, then released).
+    async fn closed_port() -> u16 {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap().port()
+    }
+
+    async fn probe(url: &str) -> Option<InsecureProbe> {
+        let limits = Limits {
+            io_timeout: std::time::Duration::from_secs(1),
+            connect_timeout: std::time::Duration::from_secs(1),
+            ..Limits::default()
+        };
+        let policy = NetPolicy {
+            allow_private: true,
+        };
+        let client = SafeClient::new(&limits, policy).unwrap();
+        probe_insecure(&client, url, &Deadline::start(limits.deadline)).await
+    }
+
+    fn first_status(p: Option<&InsecureProbe>) -> Option<u16> {
+        match p {
+            Some(InsecureProbe::Responded { chain, .. }) => chain.first().map(|h| h.status),
+            _ => None,
+        }
+    }
+
+    /// What `http://` itself did decides the probe: refused or timed out only when the first hop did; a redirect
+    /// whose next hop fails is still that redirect (302 → REVIEW, 301 to http:// → FAIL, never "not reachable").
+    #[tokio::test]
+    async fn probe_reports_what_the_first_hop_did() {
+        let refused = format!("http://127.0.0.1:{}/", closed_port().await);
+        assert!(matches!(
+            probe(&refused).await,
+            Some(InsecureProbe::Unreachable(_))
+        ));
+        assert!(matches!(
+            probe(&serve(None).await).await,
+            Some(InsecureProbe::TimedOut(_))
+        ));
+        let page = probe(
+            &serve(Some(
+                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ))
+            .await,
+        )
+        .await;
+        assert_eq!(first_status(page.as_ref()), Some(200));
+
+        let dead = closed_port().await;
+        let to_dead: &'static str = Box::leak(
+            format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{dead}/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .into_boxed_str(),
+        );
+        let p = probe(&serve(Some(to_dead)).await).await;
+        assert_eq!(first_status(p.as_ref()), Some(302), "{p:?}");
+        match &p {
+            Some(InsecureProbe::Responded { final_url, .. }) => {
+                assert_eq!(final_url, &format!("http://127.0.0.1:{dead}/x"));
+            }
+            other => panic!("expected the redirect, got {other:?}"),
+        }
+        let stalled = serve(None).await;
+        let to_stalled: &'static str = Box::leak(
+            format!("HTTP/1.1 301 Moved\r\nLocation: {stalled}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .into_boxed_str(),
+        );
+        let p = probe(&serve(Some(to_stalled)).await).await;
+        assert_eq!(first_status(p.as_ref()), Some(301), "{p:?}");
+    }
+
     #[test]
-    fn refused_and_timeout_mean_closed() {
-        assert!(closed(&Error::Network(
-            "error sending request: client error (Connect): Connection refused".into()
-        )));
-        assert!(closed(&Error::Timeout {
-            operation: "http request",
-            after: std::time::Duration::from_secs(1)
-        }));
-        assert!(!closed(&Error::Network(
-            "invalid HTTP version parsed".into()
-        )));
+    fn refused_is_closed_and_timeout_is_told_apart() {
+        assert!(matches!(
+            closed(&Error::Network(
+                "error sending request: client error (Connect): Connection refused".into()
+            )),
+            Some(InsecureProbe::Unreachable(_))
+        ));
+        assert!(matches!(
+            closed(&Error::Timeout {
+                operation: "http request",
+                after: std::time::Duration::from_secs(1)
+            }),
+            Some(InsecureProbe::TimedOut(_))
+        ));
+        assert!(matches!(
+            closed(&Error::Network(
+                "error sending request: client error (Connect): operation timed out".into()
+            )),
+            Some(InsecureProbe::TimedOut(_))
+        ));
+        assert!(closed(&Error::Network("invalid HTTP version parsed".into())).is_none());
     }
 }

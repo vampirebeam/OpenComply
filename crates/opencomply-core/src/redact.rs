@@ -34,7 +34,12 @@ static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
             r#"(?i)define\(\s*['"](?:DB_PASSWORD|(?:SECURE_)?AUTH_(?:KEY|SALT)|LOGGED_IN_(?:KEY|SALT)|NONCE_(?:KEY|SALT))['"]\s*,\s*['"]([^'"]*)['"]"#,
             1,
         ),
-        ("cookie value", r"(?i)\b(?:set-cookie|cookie)\s*:\s*[^=;\s]+=([^;\s]+)", 1),
+        // A whole `<name>` placeholder (a copy-ready example such as `session=<value>`) is matched first and kept.
+        (
+            "cookie value",
+            r"(?i)\b(?:set-cookie|cookie)\s*:\s*[^=;\s]+=(?:<[A-Za-z0-9_-]+>(?:[;\s]|$)|([^;\s]+))",
+            1,
+        ),
         ("authorization", r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{12,})", 1),
         ("aws access key", r"\b((?:AKIA|ASIA)[0-9A-Z]{16})\b", 1),
         ("github token", r"\b((?:gh[pousr]_[A-Za-z0-9]{36,})|github_pat_[A-Za-z0-9_]{50,})", 1),
@@ -54,7 +59,23 @@ static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
     .collect()
 });
 
-/// Replaces secrets with `[REDACTED <kind>]`. Returns the input unchanged (no allocation) when nothing matches.
+static SITE_LABEL: LazyLock<Option<Regex>> =
+    LazyLock::new(|| RegexBuilder::new(r"(?i)\[\s*redacted\b").build().ok());
+
+/// Marks text that imitates one of our labels (`[REDACTED …]`, any case or spacing) as `[site text: REDACTED …]`, so a
+/// reader can tell the scanner's labels from the site's. Run once on captured text, before `redact` — never on text
+/// `redact` has already labelled (it would mark the scanner's own labels).
+pub fn mark_site_labels(text: &str) -> Cow<'_, str> {
+    match SITE_LABEL.as_ref() {
+        Some(re) if re.is_match(text) => {
+            Cow::Owned(re.replace_all(text, "[site text: REDACTED").into_owned())
+        }
+        _ => Cow::Borrowed(text),
+    }
+}
+
+/// Replaces secrets with `[REDACTED <kind>]`. Idempotent. Returns the input unchanged (no allocation) when nothing
+/// matches.
 pub fn redact(text: &str) -> Cow<'_, str> {
     let mut out: Cow<'_, str> = Cow::Borrowed(text);
     for p in PATTERNS.iter() {
@@ -74,29 +95,70 @@ pub fn redact(text: &str) -> Cow<'_, str> {
                 }
             })
             .into_owned();
-        out = Cow::Owned(replaced);
+        // A match can keep everything (a `<value>` placeholder): then the input stays borrowed.
+        if replaced != *out {
+            out = Cow::Owned(replaced);
+        }
     }
     out
 }
 
-/// Copy of the report with every free-text field that can carry captured data redacted.
+/// Copy of the report with every text field marked (`mark_site_labels`) and redacted: besides evidence, checks build
+/// reasons, advice and examples from site values (a CSP example keeps the site's own sources), and custom packs can
+/// put anything in the rest. Takes the unredacted report (rendering calls it once).
 pub fn redact_report(report: &Report) -> Report {
+    fn red(s: &mut String) {
+        let marked = mark_site_labels(s);
+        if let Cow::Owned(v) = redact(&marked) {
+            *s = v;
+        } else if let Cow::Owned(v) = marked {
+            *s = v;
+        }
+    }
+    fn red_opt(s: &mut Option<String>) {
+        if let Some(v) = s {
+            red(v);
+        }
+    }
     let mut r = report.clone();
-    r.target = redact(&r.target).into_owned();
+    red(&mut r.target);
     for f in &mut r.findings {
+        red(&mut f.rule_id);
+        red(&mut f.rule_version);
+        red(&mut f.title);
         for e in &mut f.evidence {
-            e.source = redact(&e.source).into_owned();
-            e.detail = redact(&e.detail).into_owned();
+            red(&mut e.source);
+            red(&mut e.detail);
         }
-        if let Some(reason) = &f.reason {
-            f.reason = Some(redact(reason).into_owned());
-        }
-        if let Some(advice) = &f.advice {
-            f.advice = Some(redact(advice).into_owned());
+        red_opt(&mut f.reason);
+        red_opt(&mut f.fix_hint);
+        red_opt(&mut f.example_fix);
+        red_opt(&mut f.review_question);
+        red_opt(&mut f.remediation);
+        red_opt(&mut f.advice);
+        red_opt(&mut f.group);
+        f.depends_on.iter_mut().for_each(red);
+        for p in &mut f.platform_fixes {
+            red(&mut p.platform);
+            red(&mut p.how);
+            red_opt(&mut p.note);
         }
     }
     for p in &mut r.platforms {
-        p.evidence.detail = redact(&p.evidence.detail).into_owned();
+        red(&mut p.evidence.source);
+        red(&mut p.evidence.detail);
+    }
+    for p in &mut r.rule_packs {
+        red(&mut p.id);
+        red(&mut p.version);
+        red_opt(&mut p.signed_by);
+    }
+    if let Some(g) = &mut r.grade {
+        g.capped_by.iter_mut().for_each(red);
+        for s in g.upgrades.iter_mut().flat_map(|u| &mut u.steps) {
+            red(&mut s.rule_id);
+            red_opt(&mut s.impact);
+        }
     }
     r
 }
@@ -170,10 +232,43 @@ mod tests {
             redact("set-cookie: XSRF-TOKEN=eyJpdiI6IjEyMyJ9abc"),
             "set-cookie: XSRF-TOKEN=[REDACTED cookie value]"
         );
+        // Only a whole placeholder is kept: a value that merely starts like one is still a value.
+        assert_eq!(
+            redact("set-cookie: sid=<value>SECRET1; Path=/"),
+            "set-cookie: sid=[REDACTED cookie value]; Path=/"
+        );
         assert_eq!(
             redact("define( 'DB_PASSWORD', 'p@ss w0rd' );"),
             "define( 'DB_PASSWORD', '[REDACTED wp-config secret]' );"
         );
+    }
+
+    #[test]
+    fn site_text_that_imitates_a_label_is_marked() {
+        for (input, expected) in [
+            (
+                "x [REDACTED api key] y",
+                "x [site text: REDACTED api key] y",
+            ),
+            (
+                "[ redacted cookie value ]",
+                "[site text: REDACTED cookie value ]",
+            ),
+            ("[Redacted]", "[site text: REDACTED]"),
+        ] {
+            assert_eq!(mark_site_labels(input), expected, "{input}");
+        }
+        assert!(matches!(
+            mark_site_labels("[REDACTEDX] redacted"),
+            Cow::Borrowed(_)
+        ));
+        // Marking first, then redacting: the scanner's own label stays plain.
+        let both = redact(&mark_site_labels(concat!(
+            "[REDACTED x] AKIA",
+            "IOSFODNN7EXAMPLE"
+        )))
+        .into_owned();
+        assert_eq!(both, "[site text: REDACTED x] [REDACTED aws access key]");
     }
 
     #[test]
@@ -195,6 +290,8 @@ mod tests {
             "password policy requires 12 characters",
             "token bucket rate limiting",
             "x-powered-by: Next.js",
+            "Set-Cookie: session=<value>; Path=/; Secure; HttpOnly; SameSite=Lax",
+            "Set-Cookie: session=<value>",
         ] {
             assert!(matches!(redact(text), Cow::Borrowed(_)), "{text}");
         }

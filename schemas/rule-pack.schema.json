@@ -30,7 +30,9 @@
         "https_redirect",
         "header_syntax",
         "cookies",
-        "info_disclosure"
+        "info_disclosure",
+        "permissions_policy",
+        "content_type_options"
       ]
     },
     "Check": {

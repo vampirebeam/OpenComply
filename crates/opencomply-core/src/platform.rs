@@ -605,7 +605,7 @@ mod tests {
             ],
             &["fastly"],
         ),
-        (&[("server", "BunnyCDN-TH1-1154")], &["bunnycdn"]),
+        (&[("server", "BunnyCDN-AB1-0042")], &["bunnycdn"]),
         (
             &[("server", "volt-adc"), ("x-vercel-id", "sin1::x")],
             &["f5", "vercel"],

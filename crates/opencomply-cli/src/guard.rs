@@ -334,6 +334,37 @@ mod tests {
         run(Agent::Claude, event)
     }
 
+    /// `Edit` and `MultiEdit` write scan results into a file as surely as `Write` does: same question, with the path; an
+    /// edit without scan results stays silent. A redirect with no file name still asks.
+    #[test]
+    fn editing_scan_results_into_a_file_asks() {
+        let report = "# OpenComply report — headers\n| Target | x |";
+        let edit = reason(&serde_json::json!({"tool_name": "Edit", "tool_input": {
+            "file_path": "C:\\r\\notes.md", "old_string": "x", "new_string": report}}))
+        .unwrap_or_default();
+        assert!(edit.contains("C:\\r\\notes.md"), "{edit}");
+        let multi = reason(&serde_json::json!({"tool_name": "MultiEdit", "tool_input": {
+            "file_path": "C:\\r\\notes.md",
+            "edits": [{"old_string": "a", "new_string": "intro"}, {"old_string": "b", "new_string": report}]}}))
+        .unwrap_or_default();
+        assert!(multi.contains("C:\\r\\notes.md"), "{multi}");
+        assert_eq!(
+            reason(
+                &serde_json::json!({"tool_name": "MultiEdit", "tool_input": {
+                "file_path": "src/main.rs", "edits": [{"old_string": "a", "new_string": "fn main() {}"}]}})
+            ),
+            None
+        );
+        assert_eq!(
+            reason(
+                &serde_json::json!({"tool_name": "MultiEdit", "tool_input": {"file_path": "x.md"}})
+            ),
+            None
+        );
+        let bare = shell("Bash", "opencomply scan headers http://x/ >").unwrap_or_default();
+        assert!(bare.contains("saves scan results to a file"), "{bare}");
+    }
+
     /// Commands that send scan output off the computer: every common way an agent would do it, on both shells.
     #[test]
     fn sending_scan_results_asks() {
