@@ -1,4 +1,5 @@
-# CI for main, release tags and pull requests: fmt, clippy, tests on Linux / Windows / macOS, plus supply-chain checks.
+# CI for main and pull requests: fmt, clippy, tests on Linux / Windows / macOS, plus supply-chain checks.
+# Release tags are not run here: the Release workflow requires this run (push to main) to have passed for the tagged commit.
 # Weekly run re-checks dependencies for newly published advisories even when the code does not change.
 # Least privilege: read-only token, actions pinned to full commit SHAs, no secrets; `pull_request` (not `_target`)
 # so fork code never runs with write access.
@@ -7,7 +8,6 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["v*.*.*"]
   pull_request:
     branches: [main]
   schedule:
@@ -48,6 +48,45 @@ jobs:
       # --no-fail-fast: a failing crate does not hide the tests of the crates after it on that OS.
       - name: Test
         run: cargo test --workspace --all-targets --locked --no-fail-fast
+
+  # Workflow files: syntax, expressions and shell scripts (actionlint + shellcheck) and a security audit (zizmor, incl.
+  # checks that each pinned SHA belongs to its action). Tools are pinned, checksummed prebuilt binaries.
+  workflows:
+    name: workflow lint
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ACTIONLINT_URL: https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      SHELLCHECK_URL: https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.gz
+      SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+      ZIZMOR_URL: https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz
+      ZIZMOR_SHA256: e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install tools
+        run: |
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          fetch() {
+            curl --proto '=https' --tlsv1.2 -fsSL "$1" -o "$RUNNER_TEMP/$3"
+            echo "$2  $RUNNER_TEMP/$3" | sha256sum -c -
+          }
+          fetch "$ACTIONLINT_URL" "$ACTIONLINT_SHA256" actionlint.tgz
+          fetch "$SHELLCHECK_URL" "$SHELLCHECK_SHA256" shellcheck.tgz
+          fetch "$ZIZMOR_URL" "$ZIZMOR_SHA256" zizmor.tgz
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$bin" actionlint
+          tar -xzf "$RUNNER_TEMP/shellcheck.tgz" -C "$bin" --strip-components=1 shellcheck-v0.11.0/shellcheck
+          tar -xzf "$RUNNER_TEMP/zizmor.tgz" -C "$bin" zizmor
+      - name: actionlint
+        run: '"$RUNNER_TEMP/bin/actionlint" -shellcheck="$RUNNER_TEMP/bin/shellcheck" .github/workflows/*.yml'
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/bin/zizmor" --format plain .github/workflows/'
 
   # Line coverage of the whole workspace and of each critical file must stay at or above its floor; the tool is a
   # pinned, checksummed prebuilt.
