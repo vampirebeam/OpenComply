@@ -45,8 +45,9 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # --no-fail-fast: a failing crate does not hide the tests of the crates after it on that OS.
       - name: Test
-        run: cargo test --workspace --all-targets --locked
+        run: cargo test --workspace --all-targets --locked --no-fail-fast
 
   # Line coverage of the whole workspace and of each critical file must stay at or above its floor; the tool is a
   # pinned, checksummed prebuilt.
