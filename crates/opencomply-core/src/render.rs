@@ -17,6 +17,7 @@ use crate::grade::{Grading, Upgrade};
 use crate::platform::DetectedPlatform;
 use crate::redact::redact_report;
 use crate::report::{Report, RulePackRef, Summary, Verdict};
+use crate::standards::Grade;
 
 pub const MAX_HINT_CHARS: usize = 100;
 /// Examples are never truncated (a cut-off header value would be wrong to copy); rule validation bounds their length.
@@ -55,6 +56,14 @@ pub fn render(report: &Report, format: Format, all: bool) -> String {
 pub fn render_with(report: &Report, format: Format, opts: RenderOptions) -> String {
     let mut redacted = redact_report(report);
     strip_controls(&mut redacted);
+    limit_evidence(
+        &mut redacted,
+        if format == Format::Json {
+            MAX_EVIDENCE_JSON
+        } else {
+            MAX_EVIDENCE_TEXT
+        },
+    );
     let report = &redacted;
     let depth = dependency_depth(&report.findings);
     let mut shown: Vec<&Finding> = report
@@ -83,6 +92,50 @@ pub fn render_with(report: &Report, format: Format, opts: RenderOptions) -> Stri
     }
 }
 
+/// Evidence length per format: JSON keeps more for audit, summary and Markdown stay readable. Cut only after the whole
+/// value was redacted and cleaned, so a cut can never leave part of a secret behind.
+pub(crate) const MAX_EVIDENCE_JSON: usize = 4096;
+pub(crate) const MAX_EVIDENCE_TEXT: usize = 300;
+
+fn limit_evidence(r: &mut Report, max: usize) {
+    let cut = |e: &mut crate::finding::Evidence| {
+        if let Some(short) = clip_at(&e.detail, max) {
+            e.detail = short;
+            e.truncated = true;
+        }
+    };
+    r.findings
+        .iter_mut()
+        .flat_map(|f| &mut f.evidence)
+        .for_each(cut);
+    r.platforms
+        .iter_mut()
+        .map(|p| &mut p.evidence)
+        .for_each(cut);
+}
+
+/// At most `max` characters plus `…`, or `None` when it already fits. Never cuts inside a `[… REDACTED …]` label or a
+/// `<U+XXXX>` marker: the cut moves back to where the label starts.
+fn clip_at(s: &str, max: usize) -> Option<String> {
+    let end = s.char_indices().nth(max)?.0;
+    let head = &s[..end];
+    let mut cut = end;
+    if let Some(open) = head.rfind('[') {
+        let label = &s[open..];
+        let close = label.find(']').map_or(label.len(), |i| i + 1);
+        if open + close > end && label[..close].to_ascii_lowercase().contains("redacted") {
+            cut = open;
+        }
+    }
+    if let Some(open) = head[..cut].rfind('<') {
+        if open + 3 <= s.len() && s[open..].starts_with("<U+") && !head[open..cut].contains('>') {
+            cut = open;
+        }
+    }
+    let mut out = s[..cut].to_string();
+    out.push('…');
+    Some(out)
+}
 /// Longest chain of still-open (actionable) dependencies under each actionable finding. Computed over every
 /// finding, not only the shown ones; bounded by the finding count so a cycle cannot loop.
 fn dependency_depth(findings: &[Finding]) -> std::collections::BTreeMap<&str, usize> {
@@ -182,6 +235,9 @@ fn render_summary(report: &Report, shown: &[&Finding], all: bool) -> String {
     if let Some(g) = &report.grade {
         if !g.capped_by.is_empty() {
             let _ = writeln!(out, "grade capped: {}", one_line(&g.capped_by.join("; ")));
+        }
+        if let Some(note) = open_note(g, &s, verdict) {
+            let _ = writeln!(out, "note: {note}");
         }
         summary_upgrades(&mut out, &g.upgrades, all);
     }
@@ -321,14 +377,19 @@ fn md_upgrades(out: &mut String, upgrades: &[Upgrade]) {
     if upgrades.is_empty() {
         return;
     }
-    out.push_str("\n## How to raise the grade\n\n| Target | Check | Points | Required | Impact of passing it |\n|---|---|---|---|---|\n");
-    for u in upgrades {
-        let target = format!(
-            "{} (→ {} {})",
-            u.to.label(),
-            u.result.label(),
-            u.result_score
-        );
+    out.push_str("\n## How to raise the grade\n\nThe grade weighs every check by severity; a grade reached here does not mean every check passes (the verdict lists what is still open).\n\n| Target | Check | Points | Required | Impact of passing it |\n|---|---|---|---|---|\n");
+    // Same steps toward the next grade and toward A+ (one fix jumps both): one row set, as in the summary.
+    let same_path = upgrades.len() == 2 && upgrades[0].steps == upgrades[1].steps;
+    for (n, u) in upgrades.iter().enumerate() {
+        if same_path && n == 0 {
+            continue;
+        }
+        let to = if same_path {
+            format!("{} and {}", upgrades[0].to.label(), u.to.label())
+        } else {
+            u.to.label().to_string()
+        };
+        let target = format!("{to} (→ {} {})", u.result.label(), u.result_score);
         for s in &u.steps {
             let _ = writeln!(
                 out,
@@ -343,6 +404,17 @@ fn md_upgrades(out: &mut String, upgrades: &[Upgrade]) {
     }
 }
 
+/// A top grade (A / A+) while checks are still open: say so, so the grade is not read as "everything passed".
+fn open_note(g: &Grading, s: &Summary, verdict: Verdict) -> Option<String> {
+    let open = s.fail + s.unknown + s.needs_review + s.insufficient_evidence;
+    (matches!(g.grade, Grade::A | Grade::APlus) && verdict != Verdict::Pass && open > 0).then(|| {
+        format!(
+            "grade {} with {open} check{} still open; the grade weighs checks, the verdict lists what is open",
+            g.grade.label(),
+            if open == 1 { "" } else { "s" }
+        )
+    })
+}
 fn next_steps(s: &Summary, verdict: Verdict, pointer: bool) -> String {
     let advice = if s.advice > 0 {
         format!(" · advice {} (optional)", s.advice)
@@ -520,7 +592,12 @@ fn md_overview(out: &mut String, report: &Report) {
         } else {
             format!(" — capped: {}", md_cell(&g.capped_by.join("; ")))
         };
-        let _ = writeln!(out, "| Grade | **{}**{score}{capped} |", g.grade.label());
+        let open = open_note(g, &s, verdict).map_or_else(String::new, |n| format!(" — {n}"));
+        let _ = writeln!(
+            out,
+            "| Grade | **{}**{score}{capped}{open} |",
+            g.grade.label()
+        );
     }
     let advice = if s.advice > 0 {
         format!(" · {} with advice", s.advice)
@@ -913,6 +990,7 @@ mod tests {
                 class: EvidenceClass::Verified,
                 source: "GET https://example.com".into(),
                 detail: format!("{id} evidence"),
+                truncated: false,
             }],
             reason: None,
             fix_hint: Some(format!("{id} fix")),
@@ -934,6 +1012,166 @@ mod tests {
             .map(|(i, (st, sv))| finding(&format!("HDR-{i:03}"), *st, *sv))
             .collect();
         Report::new(Module::Headers, "https://example.com", findings)
+    }
+
+    fn json_evidence(r: &Report) -> (String, bool) {
+        let v: serde_json::Value = serde_json::from_str(&render(r, Format::Json, true)).unwrap();
+        let e = &v["findings"][0]["evidence"][0];
+        (
+            e["detail"].as_str().unwrap().to_string(),
+            e["truncated"] == true,
+        )
+    }
+
+    fn with_detail(detail: String) -> Report {
+        let mut f = finding("HDR-002", Status::Fail, Severity::High);
+        f.evidence[0].detail = detail;
+        Report::new(Module::Headers, "https://example.com", vec![f])
+    }
+
+    // D-2 boundaries: a value that fits is printed whole and not flagged; one character over is cut and flagged.
+    #[test]
+    fn evidence_limits_hold_at_each_boundary() {
+        for (n, max) in [
+            (299, 300),
+            (300, 300),
+            (301, 300),
+            (4095, 4096),
+            (4096, 4096),
+            (4097, 4096),
+        ] {
+            let cut = clip_at(&"a".repeat(n), max);
+            if n <= max {
+                assert_eq!(cut, None, "{n}");
+            } else {
+                assert_eq!(cut.unwrap().chars().count(), max + 1, "{n}");
+            }
+        }
+        for n in [4095, 4096, 4097] {
+            let (d, truncated) = json_evidence(&with_detail("a".repeat(n)));
+            assert_eq!(truncated, n > 4096, "{n}");
+            assert_eq!(
+                d.chars().count(),
+                n.min(4096) + usize::from(n > 4096),
+                "{n}"
+            );
+        }
+        let md = render(&with_detail("a".repeat(301)), Format::Markdown, true);
+        assert!(md.contains(&format!("{}…", "a".repeat(300))) && !md.contains(&"a".repeat(301)));
+    }
+
+    // JSON and Markdown differ only in length: the start of the value is the same in both.
+    #[test]
+    fn json_and_markdown_share_the_same_start() {
+        let value: String = (b'a'..=b'z').cycle().take(5000).map(char::from).collect();
+        let r = with_detail(value.clone());
+        let (d, _) = json_evidence(&r);
+        assert!(value.starts_with(d.trim_end_matches('…')));
+        assert!(render(&r, Format::Markdown, true).contains(&value[..300]));
+    }
+
+    // Redaction runs on the whole value before any cut: a secret at the end, or across either cut point, never
+    // leaves any part of itself in any format.
+    #[test]
+    fn secret_never_survives_a_cut() {
+        let secret = concat!("ghp_", "0123456789abcdefghijklmnopqrstuvwxyzAB");
+        for at in [10, 280, 290, 299, 4080, 4090, 4095, 4999] {
+            // Separated as in a header value (space, `=`, `;`); glued to letters it is not a token boundary.
+            let mut v = "a".repeat(at);
+            v.push(' ');
+            v.push_str(secret);
+            v.push_str(&"b".repeat(20));
+            let r = with_detail(v);
+            for format in [Format::Summary, Format::Json, Format::Markdown] {
+                let out = render(&r, format, true);
+                assert!(!out.contains("ghp_0123"), "{at} {format:?}");
+                assert!(!out.contains("vwxyzAB"), "{at} {format:?}");
+            }
+        }
+    }
+
+    // A cut never splits our own labels, so a reader cannot mistake half a label for site text.
+    #[test]
+    fn cut_keeps_labels_whole() {
+        let s = format!("{}[REDACTED api key] tail", "a".repeat(295));
+        assert_eq!(clip_at(&s, 300).unwrap(), format!("{}…", "a".repeat(295)));
+        let s = format!("{}<U+202E> tail", "a".repeat(296));
+        assert_eq!(clip_at(&s, 300).unwrap(), format!("{}…", "a".repeat(296)));
+        let s = format!("{}[x] {}", "a".repeat(10), "b".repeat(400));
+        assert_eq!(clip_at(&s, 300).unwrap().chars().count(), 301);
+    }
+
+    // Invisible / bidi characters after the Markdown cut still show as markers in JSON and never reach any output raw.
+    #[test]
+    fn invisible_text_after_the_cut_stays_visible_or_gone() {
+        let r = with_detail(format!("{}\u{202e}evil\u{200b}", "a".repeat(350)));
+        for format in [Format::Summary, Format::Json, Format::Markdown] {
+            let out = render(&r, format, true);
+            assert!(
+                !out.contains('\u{202e}') && !out.contains('\u{200b}'),
+                "{format:?}"
+            );
+        }
+        assert!(json_evidence(&r).0.contains("<U+202E>evil<U+200B>"));
+    }
+
+    // Markdown metacharacters in long evidence cannot break the table or the evidence line.
+    #[test]
+    fn markdown_metacharacters_in_long_evidence_stay_inert() {
+        let r = with_detail(format!("{}| `x` [y](z) <b>*q*</b>", "a".repeat(250)));
+        let md = render(&r, Format::Markdown, true);
+        let outside: String = md.split('`').step_by(2).collect();
+        assert!(!outside.contains("<b>"), "{md}");
+        assert!(!outside.replace("\\](z)", "").contains("](z)"), "{md}");
+        let row = md.lines().find(|l| l.starts_with("| HDR-002")).unwrap();
+        let header = md.lines().find(|l| l.starts_with("| Rule")).unwrap();
+        let cells = |l: &str| l.replace("\\|", "").matches('|').count();
+        assert_eq!(cells(row), cells(header), "{md}");
+    }
+
+    // One fix that reaches both the next grade and A+ is shown once in Markdown, as in the summary.
+    #[test]
+    fn markdown_merges_identical_upgrade_paths() {
+        let step = crate::grade::UpgradeStep {
+            rule_id: "HDR-002".into(),
+            points: 27,
+            required: true,
+            impact: None,
+        };
+        let up = |to| Upgrade {
+            to,
+            steps: vec![step.clone()],
+            result: Grade::APlus,
+            result_score: 95,
+        };
+        let mut out = String::new();
+        md_upgrades(&mut out, &[up(Grade::C), up(Grade::APlus)]);
+        assert_eq!(out.matches("| HDR-002 |").count(), 1, "{out}");
+        assert!(out.contains("| C and A+ (→ A+ 95) |"), "{out}");
+        assert!(out.contains("does not mean every check passes"), "{out}");
+    }
+
+    // D-1 = keep the policy: a low FAIL can still reach A+, and every format then says checks are still open.
+    #[test]
+    fn top_grade_with_open_checks_says_so() {
+        let g = Grading {
+            grade: Grade::APlus,
+            score: Some(95),
+            capped_by: vec![],
+            upgrades: vec![],
+        };
+        let s = Summary {
+            fail: 1,
+            ..Summary::default()
+        };
+        let note = open_note(&g, &s, Verdict::Fail).unwrap();
+        assert!(note.contains("1 check still open"), "{note}");
+        assert_eq!(open_note(&g, &Summary::default(), Verdict::Pass), None);
+        let low = Grading {
+            grade: Grade::C,
+            ..g
+        };
+        assert_eq!(open_note(&low, &s, Verdict::Fail), None);
     }
 
     // T11: link / image syntax from a site (evidence, or a reason that quotes it) never forms a live Markdown link or

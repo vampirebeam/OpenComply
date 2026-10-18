@@ -376,6 +376,7 @@ pub fn detect_from_html(html: &str, source: &str) -> Vec<DetectedPlatform> {
                     class: EvidenceClass::Inferred,
                     source: source.to_string(),
                     detail: format!("HTML contains \"{}\"", needle(*marker)),
+                    truncated: false,
                 },
             });
         }
@@ -516,6 +517,7 @@ pub fn detect_platforms(headers: &[(String, String)], source: &str) -> Vec<Detec
                     class: EvidenceClass::Inferred,
                     source: source.to_string(),
                     detail: format!("{name}: {}", value.chars().take(120).collect::<String>()),
+                    truncated: false,
                 },
             });
         }

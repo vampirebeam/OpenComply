@@ -497,8 +497,10 @@ fn injected_text_stays_data_in_every_format() {
         &EvalInput::Http(&http),
         vec![],
     );
-    for f in &r.findings {
-        assert!(f.evidence[0].detail.chars().count() <= 301, "{}", f.rule_id);
+    let json: serde_json::Value = serde_json::from_str(&render(&r, Format::Json, true)).unwrap();
+    for f in json["findings"].as_array().unwrap() {
+        let d = f["evidence"][0]["detail"].as_str().unwrap();
+        assert!(d.chars().count() <= 4097, "{}", f["rule_id"]);
     }
     for format in [Format::Summary, Format::Json, Format::Markdown] {
         for all in [false, true] {
@@ -738,4 +740,73 @@ fn summary_output_shows_site_specific_example() {
         out.contains("change only script-src: script-src 'self' 'nonce-<random-per-request>' https://cdn.example.net"),
         "{out}"
     );
+}
+
+fn scan_with(headers: &[(&str, &str)]) -> opencomply_core::Report {
+    let mut all = vec![("Content-Type".to_string(), "text/html".to_string())];
+    all.extend(
+        headers
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string())),
+    );
+    let http = HttpEvidence {
+        source: "GET https://example.com/".into(),
+        status: 200,
+        headers: all,
+        https: true,
+        insecure_probe: Some(redirect(301)),
+        redirect_cookies: vec![],
+        html_generator: None,
+    };
+    evaluate_pack(
+        &pack(),
+        "https://example.com/",
+        &EvalInput::Http(&http),
+        vec![],
+    )
+}
+
+/// HDR-010 guidance matches the evidence: a bare name gets the builtin text, a version keeps the pack's. Builtin
+/// text wins over the pack's (same pack, guidance can differ by scanner version — by design, `evaluate.rs`).
+#[test]
+fn disclosure_guidance_matches_what_leaked() {
+    let rem = |v: &str| {
+        let r = scan_with(&[("X-Powered-By", v)]);
+        let f = r.findings.iter().find(|f| f.rule_id == "HDR-010").unwrap();
+        assert_eq!(f.status, Status::Fail, "{v}");
+        f.remediation.clone().unwrap()
+    };
+    let pack_text = pack()
+        .rules
+        .iter()
+        .find(|r| r.id == "HDR-010")
+        .unwrap()
+        .remediation
+        .clone();
+    let bare = rem("Next.js");
+    assert!(bare.starts_with("Naming the software"), "{bare}");
+    assert!(!bare.contains("your exact software"), "{bare}");
+    assert_eq!(rem("PHP/8.2.1"), pack_text);
+}
+
+/// The check decides on the whole header, not on the printed evidence: a risk past the JSON cut still fails.
+#[test]
+fn risk_past_the_evidence_cut_still_fails() {
+    let csp = format!(
+        "default-src 'self'; img-src {} ; script-src 'self' 'unsafe-inline'",
+        "https://a.example ".repeat(300)
+    );
+    assert!(csp.len() > 4096);
+    let r = scan_with(&[("Content-Security-Policy", csp.as_str())]);
+    let f = r.findings.iter().find(|f| f.rule_id == "HDR-002").unwrap();
+    assert_eq!(f.status, Status::Fail);
+    let json: serde_json::Value = serde_json::from_str(&render(&r, Format::Json, true)).unwrap();
+    let e = json["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["rule_id"] == "HDR-002")
+        .unwrap()["evidence"][0]
+        .clone();
+    assert_eq!(e["truncated"], true);
 }

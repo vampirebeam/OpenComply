@@ -33,6 +33,7 @@ fn finding(title: String, detail: String, reason: String, status: Status) -> Fin
             class: EvidenceClass::Verified,
             source: "GET x".into(),
             detail,
+            truncated: false,
         }],
         reason: Some(reason),
         fix_hint: Some("f".into()),
@@ -45,6 +46,28 @@ fn finding(title: String, detail: String, reason: String, status: Status) -> Fin
         depends_on: vec![],
         group: None,
     }
+}
+
+/// Every format bounds the evidence it prints: JSON ≤ 4,096 characters + `…` (flagged `truncated`), summary and
+/// Markdown lines stay short because their evidence is cut at 300.
+fn printed_evidence_is_bounded(r: &Report) -> bool {
+    let json: serde_json::Value = match serde_json::from_str(&render(r, Format::Json, true)) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let json_ok = json["findings"].as_array().is_some_and(|fs| {
+        fs.iter()
+            .flat_map(|f| f["evidence"].as_array().cloned().unwrap_or_default())
+            .all(|e| {
+                let n = e["detail"].as_str().map_or(0, |d| d.chars().count());
+                n <= 4097 && (n <= 4096 || e["truncated"] == true)
+            })
+    });
+    let md_ok = render(r, Format::Markdown, true)
+        .lines()
+        .filter(|l| l.starts_with("- **Evidence"))
+        .all(|l| l.chars().count() <= 300 * 2 + 200);
+    json_ok && md_ok
 }
 
 fn status() -> impl Strategy<Value = Status> {
@@ -146,7 +169,8 @@ proptest! {
             ..HttpEvidence::default()
         };
         let f = evaluate_rule(&rule, Module::Headers, &EvalInput::Http(&http), &[]);
-        prop_assert!(f.evidence[0].detail.chars().count() <= 301);
+        let r = Report::new(Module::Headers, "https://example.com", vec![f]);
+        prop_assert!(printed_evidence_is_bounded(&r));
     }
 
     #[test]
@@ -180,7 +204,7 @@ proptest! {
         };
         for rule in &pack.rules {
             let f = evaluate_rule(rule, Module::Headers, &EvalInput::Http(&http), &[]);
-            prop_assert!(f.evidence[0].detail.chars().count() <= 301);
+            prop_assert!(printed_evidence_is_bounded(&Report::new(Module::Headers, "x", vec![f.clone()])));
             prop_assert!(f.advice.as_ref().is_none_or(|a| a.chars().count() <= 301));
             prop_assert!(!f.advice.as_deref().unwrap_or("").contains("SECRETCOOKIEVALUE"), "{}", rule.id);
             prop_assert!(f.review_question.as_ref().is_none_or(|q| q.chars().count() <= opencomply_core::MAX_HINT_CHARS));

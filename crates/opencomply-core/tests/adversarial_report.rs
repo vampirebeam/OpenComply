@@ -400,6 +400,7 @@ fn finding(status: Status) -> Finding {
             class: EvidenceClass::Verified,
             source: hostile("source"),
             detail: hostile("detail"),
+            truncated: false,
         }],
         reason: Some(hostile("reason")),
         fix_hint: Some(hostile("fix")),

@@ -200,12 +200,34 @@ fn unparseable_directive_is_unknown_not_pass() {
     assert_eq!(r.exit_code(opencomply_core::FailOn::Fail) as u8, 1);
 }
 
+/// The check sees the whole value; each format bounds what it prints (JSON 4,096, summary / Markdown 300) and JSON
+/// says it was cut.
 #[test]
-fn evidence_is_bounded() {
+fn evidence_is_bounded_per_format() {
     let long = "x".repeat(5000);
     let r = run(&[("Permissions-Policy", long.as_str())]);
     let pp = r.findings.iter().find(|f| f.rule_id == "HDR-005").unwrap();
-    assert!(pp.evidence[0].detail.chars().count() <= 301);
+    assert_eq!(
+        pp.evidence[0].detail.chars().count(),
+        long.len() + "permissions-policy: ".len()
+    );
+    let json: serde_json::Value = serde_json::from_str(&opencomply_core::render(
+        &r,
+        opencomply_core::Format::Json,
+        true,
+    ))
+    .unwrap();
+    let e = json["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["rule_id"] == "HDR-005")
+        .unwrap()["evidence"][0]
+        .clone();
+    assert_eq!(e["detail"].as_str().unwrap().chars().count(), 4097);
+    assert_eq!(e["truncated"], true);
+    let md = opencomply_core::render(&r, opencomply_core::Format::Markdown, true);
+    assert!(!md.contains(&"x".repeat(301)));
 }
 
 #[test]

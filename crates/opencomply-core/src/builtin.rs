@@ -1305,8 +1305,18 @@ fn info_disclosure(http: &HttpEvidence) -> Outcome {
             if names.len() == 1 { "tells" } else { "tell" }
         )
     };
-    Outcome::fail(shown_leaks.join("; "), reason).with_layers(layers)
+    // The pack's remediation is written for version leaks; without a version, say what a bare name gives away.
+    let remediation = (!versioned).then(|| UNVERSIONED_LEAK_REMEDIATION.to_string());
+    Outcome::fail(shown_leaks.join("; "), reason)
+        .with_layers(layers)
+        .with_remediation(remediation)
 }
+
+const UNVERSIONED_LEAK_REMEDIATION: &str = "Naming the software lets attackers pick attacks and known weaknesses \
+for it without probing. Removing the header stops this free reconnaissance; it is not a substitute for keeping the \
+software updated. If a version appears later (after an upgrade or a plugin change), it also points to known \
+vulnerabilities for that exact release. The same applies to a <meta name=\"generator\"> tag and to internal server \
+names in X-Backend-Server or Server-Timing.";
 
 #[cfg(test)]
 mod tests {

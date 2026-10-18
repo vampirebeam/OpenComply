@@ -12,6 +12,8 @@
 
 ## How to raise the grade
 
+The grade weighs every check by severity; a grade reached here does not mean every check passes (the verdict lists what is still open).
+
 | Target | Check | Points | Required | Impact of passing it |
 |---|---|---|---|---|
 | C (→ B 83) | HDR-002 | +25 | yes | Nonces need each response rendered per request (server or edge); fully static pages must use hashes, and inline or third-party scripts may need changes |

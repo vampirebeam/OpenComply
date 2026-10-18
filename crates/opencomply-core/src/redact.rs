@@ -315,6 +315,7 @@ mod tests {
                 class: EvidenceClass::Verified,
                 source: "GET https://u:pw12345@example.com/".into(),
                 detail: "Set-Cookie: sid=abcdef123456; Path=/".into(),
+                truncated: false,
             }],
             reason: Some("token=abcd1234 found".into()),
             fix_hint: None,

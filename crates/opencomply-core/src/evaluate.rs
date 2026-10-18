@@ -9,7 +9,7 @@ use crate::platform::DetectedPlatform;
 use crate::report::Report;
 use crate::rules::{Check, LayerHint, Rule, RulePack};
 
-pub(crate) const MAX_EVIDENCE_CHARS: usize = 300;
+pub(crate) const MAX_ADVICE_CHARS: usize = 300;
 
 /// Response evidence for header operators. `headers` keep the received order and repeats.
 /// `https` = the evaluated response came over HTTPS; `insecure_probe` = what `http://` of the same site did.
@@ -81,7 +81,11 @@ pub enum EvalInput<'a> {
 /// `example` overrides the rule's static `example_fix` (built from the site's own values, e.g. its CSP);
 /// `layers` says which platform layers can fix what the evidence shows (overrides the rule's static `prefer`);
 /// `question` replaces the rule's `review_question` when the check knows the actual decision;
+/// `remediation` replaces the rule's `remediation` when the evidence calls for different guidance (builtin text wins
+/// over the pack's, so the same pack can read differently across scanner versions);
 /// `advice` = an optional improvement that leaves status, verdict and grade unchanged.
+/// `detail` is kept whole: status is decided from the full evidence, and each format cuts `detail` only after
+/// redaction (render).
 pub(crate) struct Outcome {
     pub status: Status,
     pub detail: String,
@@ -90,6 +94,7 @@ pub(crate) struct Outcome {
     pub example: Option<String>,
     pub layers: Option<LayerHint>,
     pub question: Option<String>,
+    pub remediation: Option<String>,
     pub advice: Option<String>,
 }
 
@@ -97,12 +102,13 @@ impl Outcome {
     fn new(status: Status, detail: impl AsRef<str>, reason: Option<String>) -> Self {
         Self {
             status,
-            detail: clip(detail.as_ref()),
+            detail: detail.as_ref().to_string(),
             reason,
             missing: false,
             example: None,
             layers: None,
             question: None,
+            remediation: None,
             advice: None,
         }
     }
@@ -114,6 +120,11 @@ impl Outcome {
     #[must_use]
     pub fn with_question(mut self, question: &str) -> Self {
         self.question = Some(question.to_string());
+        self
+    }
+    #[must_use]
+    pub fn with_remediation(mut self, remediation: Option<String>) -> Self {
+        self.remediation = remediation;
         self
     }
     #[must_use]
@@ -153,8 +164,8 @@ impl Outcome {
 }
 
 pub(crate) fn clip(s: &str) -> String {
-    let mut out: String = s.chars().take(MAX_EVIDENCE_CHARS).collect();
-    if s.chars().count() > MAX_EVIDENCE_CHARS {
+    let mut out: String = s.chars().take(MAX_ADVICE_CHARS).collect();
+    if s.chars().count() > MAX_ADVICE_CHARS {
         out.push('…');
     }
     out
@@ -337,6 +348,7 @@ pub fn evaluate_rule(
             class: EvidenceClass::Verified,
             source,
             detail: outcome.detail,
+            truncated: false,
         }],
         reason: outcome.reason,
         fix_hint: actionable.then(|| rule.fix_hint.clone()),
@@ -358,7 +370,13 @@ pub fn evaluate_rule(
         } else {
             None
         },
-        remediation: actionable.then(|| rule.remediation.clone()),
+        remediation: if actionable {
+            outcome
+                .remediation
+                .or_else(|| Some(rule.remediation.clone()))
+        } else {
+            None
+        },
         advice: outcome.advice,
         effort: if actionable { rule.effort } else { None },
         depends_on: if actionable {

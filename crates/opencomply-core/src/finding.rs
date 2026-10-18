@@ -96,11 +96,15 @@ impl Effort {
     }
 }
 
+/// `detail` is always cleaned and redacted. `truncated` = this report format cut `detail` (after redaction) to its
+/// length limit, so it is not the whole value; the check itself was decided on the whole value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Evidence {
     pub class: EvidenceClass,
     pub source: String,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
 }
 
 /// `reason` = why this result (scanner-generated, e.g. "response has no Permissions-Policy header").

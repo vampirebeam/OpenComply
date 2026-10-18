@@ -21,6 +21,7 @@ next: fix 3 · evidence: --format markdown
 |---|---|
 | first line | module, target, `verdict`, grade and score, count per status, `advice=N` when there is advice, detected platforms |
 | `grade capped:` | why the grade is lower than the score alone would give |
+| `note:` | grade A / A+ while checks are still open — the grade weighs checks; report the open ones, never "everything passed" |
 | `to X: … → Y n` | fixes needed to reach grade X, points each adds, `required` = cannot be skipped; `→` the actual result after them (can exceed X) |
 | `impact (ID):` | what passing that rule changes or costs; `impact of …: --all` = more impact lines with `--all` |
 | `FAIL` / `REVIEW` / `UNKNOWN` | status, rule ID, severity, finding, then the usual effort: `quick` · `moderate` · `involved` |
@@ -79,6 +80,8 @@ status plus `advice`), `findings[]` (`rule_id`, `rule_version`, `title`, `status
 `fix_hint`, `example_fix`, `platform_fixes[]` with `platform`, `how`, `note`, `preferred`, `review_question`,
 `remediation`, `advice`, `effort`, `depends_on[]`, `group`). Findings come in the order to work on them.
 `--format json --compact` leaves out `remediation` and the evidence of passed checks.
+Evidence `detail` is redacted, then cut to 4,096 characters in JSON and 300 in the summary / Markdown;
+`truncated: true` = the shown value is not whole (the check itself used the whole value).
 Full schema: `opencomply schema report`.
 Evidence `class`: `verified` = read from the response and used to decide (including the page's own
 `<meta name="generator">`); `inferred` = platform detection, guidance only.

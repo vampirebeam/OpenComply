@@ -98,6 +98,7 @@
       ]
     },
     "Evidence": {
+      "description": "`detail` is always cleaned and redacted. `truncated` = this report format cut `detail` (after redaction) to its\nlength limit, so it is not the whole value; the check itself was decided on the whole value.",
       "type": "object",
       "properties": {
         "class": {
@@ -108,6 +109,9 @@
         },
         "source": {
           "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
         }
       },
       "required": [

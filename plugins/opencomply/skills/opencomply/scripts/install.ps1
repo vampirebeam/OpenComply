@@ -10,7 +10,7 @@ param([switch]$Uninstall)
     param([bool]$Uninstall)
     $ErrorActionPreference = 'Stop'
 
-    $Version = if ($env:OPENCOMPLY_VERSION) { $env:OPENCOMPLY_VERSION } else { '0.3.10' }
+    $Version = if ($env:OPENCOMPLY_VERSION) { $env:OPENCOMPLY_VERSION } else { '0.3.11' }
     $Repo = 'vampirebeam/OpenComply'
     $Root = Join-Path $env:LOCALAPPDATA 'opencomply'
     $BinDir = Join-Path $Root 'bin'
