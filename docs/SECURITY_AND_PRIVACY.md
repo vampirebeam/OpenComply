@@ -41,10 +41,49 @@ It separates what the CLI enforces itself from what depends on an AI agent follo
 
 Also:
 
-- The installer checks the SHA-256 of the download. That confirms the file matches the checksum published with the release; on its own it does not prove who published it. You can [read the installer before it runs](GETTING_STARTED.md#read-the-installer-before-it-runs).
+- The installer checks the SHA-256 of the download. That confirms the file matches the checksum published with the release; on its own it does not prove who published it. You can [read the installer before it runs](GETTING_STARTED.md#read-the-installer-before-it-runs), and [verify a download](#verify-a-download) against the maintainer's signature.
 - The binaries are not signed by Apple or Microsoft.
 - **Testing:** vampirebeam tests the agent skill and plugin, with Claude Code as the agent, against adversarial inputs, unauthorized actions and data-handling scenarios, checking both what the agent says and what its tools actually do. Results do not guarantee identical behaviour across agents or environments.
 
+## Verify a download
+
+From v0.3.12, each release includes `SHA256SUMS` (the SHA-256 of every archive and both installers) and `SHA256SUMS.sig`, a signature the maintainer makes offline with the release key — the key is never on GitHub or in the build system. A valid signature shows the files match what the holder of that key signed. It does not show that the code is safe, and because this key is published here, on the same GitHub account as the files, it does not protect a first download if that account were taken over.
+
+Release key `opencomply-release-2026` (Ed25519):
+
+```text
+655b5d1cd30940ae6a008628fd694cbcf3d7c99de4e2fa3651bbdb5277a66227
+```
+
+Save it as `opencomply-release.pub.pem`:
+
+```text
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAZVtdHNMJQK5qAIYo/WlMvPPXyZ3k4vo2UbvbUnemYic=
+-----END PUBLIC KEY-----
+```
+
+Download `SHA256SUMS`, `SHA256SUMS.sig` and the files you want into one folder, then run the following. This needs OpenSSL 3 — the `openssl` built into macOS (LibreSSL) cannot check this kind of signature; use Homebrew's `openssl@3`. On Windows, Git for Windows includes OpenSSL 3.
+
+Linux / macOS:
+
+```bash
+sed -n 's/^signature: //p' SHA256SUMS.sig | xxd -r -p > SHA256SUMS.sig.bin
+openssl pkeyutl -verify -pubin -inkey opencomply-release.pub.pem -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig.bin
+sha256sum -c --ignore-missing SHA256SUMS   # macOS: shasum -a 256 -c --ignore-missing SHA256SUMS
+```
+
+Windows (PowerShell):
+
+```powershell
+$openssl = "C:\Program Files\Git\mingw64\bin\openssl.exe"
+$hex = ((Get-Content SHA256SUMS.sig) -match '^signature: ') -replace '^signature: ', ''
+[IO.File]::WriteAllBytes("$PWD\SHA256SUMS.sig.bin", [byte[]]($hex -split '(..)' -ne '' | ForEach-Object { [Convert]::ToByte($_, 16) }))
+& $openssl pkeyutl -verify -pubin -inkey opencomply-release.pub.pem -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig.bin
+Get-Content SHA256SUMS | ForEach-Object { $h, $f = $_ -split '\s+', 2; if (Test-Path $f) { "$f " + ((Get-FileHash $f).Hash.ToLower() -eq $h) } }
+```
+
+Expect `Signature Verified Successfully`, then `OK` (or `True`) for each file you downloaded. Anything else: do not run the files, and [report it](../SECURITY.md).
 ## Limitations
 
 - This version checks **HTTP security headers** only. It does not check SSL/TLS certificates or ciphers, look for vulnerabilities or malware, or review source code. `opencomply standards` lists what is checked.

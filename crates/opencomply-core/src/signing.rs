@@ -20,6 +20,18 @@ pub const OFFICIAL_KEYS: &[(&str, &str)] = &[(
     "be0b0521956c92fdb993ecab30605945d509e2cb848d725ec9b0b674d77928d6",
 )];
 
+/// Release keys `(key id, 64 hex chars)`: sign a release's `SHA256SUMS` (archives + installers), offline by the
+/// maintainer, never in CI. Recovery keys sign only key revocation / rotation notices, never a release. Built in so
+/// a later version can check releases against keys pinned by an earlier install.
+pub const RELEASE_KEYS: &[(&str, &str)] = &[(
+    "opencomply-release-2026",
+    "655b5d1cd30940ae6a008628fd694cbcf3d7c99de4e2fa3651bbdb5277a66227",
+)];
+pub const RECOVERY_KEYS: &[(&str, &str)] = &[(
+    "opencomply-recovery-2026",
+    "e3cadf3557c2327fb48cafed2d1c67a8ea2496c67ab093cfe7273c201e8f9d41",
+)];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignatureError {
     Malformed(String),
@@ -262,6 +274,44 @@ mod tests {
             "an official key failed to parse"
         );
         assert_eq!(keys[0].id, "opencomply-2026");
+    }
+
+    fn parsed(list: &[(&str, &str)]) -> Vec<TrustedKey> {
+        list.iter()
+            .map(|(id, hex)| TrustedKey::from_hex(id, hex).unwrap())
+            .collect()
+    }
+
+    // Release, recovery and pack keys are valid, and no key or id serves two roles.
+    #[test]
+    fn release_and_recovery_keys_are_valid_and_separate() {
+        let groups = [
+            parsed(OFFICIAL_KEYS),
+            parsed(RELEASE_KEYS),
+            parsed(RECOVERY_KEYS),
+        ];
+        let all: Vec<&TrustedKey> = groups.iter().flatten().collect();
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a.id, b.id);
+                assert!(a.key != b.key, "{} and {} share a key", a.id, b.id);
+            }
+        }
+        assert_eq!(groups[1][0].id, "opencomply-release-2026");
+        assert_eq!(groups[2][0].id, "opencomply-recovery-2026");
+    }
+
+    // A manifest signed under the recovery key's id is not accepted where release keys are expected.
+    #[test]
+    fn recovery_key_cannot_sign_a_release() {
+        let sums = b"0000  opencomply-v9.9.9-x86_64-unknown-linux-gnu.tar.gz\n";
+        let sig = sign("opencomply-recovery-2026", 9, sums);
+        assert_eq!(
+            verify_pack(sums, Some(&sig), &parsed(RELEASE_KEYS)),
+            Err(SignatureError::UnknownKey(
+                "opencomply-recovery-2026".into()
+            ))
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 # Release binaries for a tag vX.Y.Z: build on each OS, package with LICENSE / NOTICE / third-party notices and a
-# CycloneDX SBOM of that binary, then create ONE draft release with every archive, its .sha256 and both installers.
-# The maintainer reviews and publishes the draft by hand.
+# CycloneDX SBOM of that binary, then create ONE draft release with every archive, its .sha256, both installers and a
+# SHA256SUMS manifest of those five files. The maintainer signs SHA256SUMS offline, attaches SHA256SUMS.sig to the
+# draft and publishes it by hand.
 # Runs on a pushed tag, or by hand for an existing tag (workflow_dispatch) — the tag's code is built, never moved.
 # Nothing is built unless CI passed for the exact commit the tag points to (run of ci.yml pushed to main, every
 # required job green). Only `publish-draft` can write to releases; it runs no repository code. No secrets and no
@@ -221,8 +222,8 @@ jobs:
           retention-days: 1
 
   # The only job that can write to releases. It runs no repository code (no build, no cache): it checks the three
-  # archives against their .sha256, attests their provenance, and creates the draft once with every file. An existing
-  # release for the tag is never overwritten.
+  # archives against their .sha256, writes SHA256SUMS (archives + installers, sorted by name), attests the archives'
+  # provenance, and creates the draft once with every file. An existing release for the tag is never overwritten.
   publish-draft:
     name: create draft release
     needs: [verify, ci-gate, build]
@@ -270,8 +271,11 @@ jobs:
           done
           [ "${#extra[@]}" -eq 0 ] || { echo "::error::unexpected files: ${extra[*]}"; exit 1; }
           cp ../plugins/opencomply/skills/opencomply/scripts/install.sh ../plugins/opencomply/skills/opencomply/scripts/install.ps1 .
+          LC_ALL=C sha256sum -- "${expected[@]}" install.sh install.ps1 | LC_ALL=C sort -k 2 > SHA256SUMS
+          [ "$(wc -l < SHA256SUMS)" -eq 5 ] || { echo "::error::SHA256SUMS must list 5 files"; exit 1; }
+          sha256sum -c SHA256SUMS
           ls -l
-          sha256sum -- ./*
+          cat SHA256SUMS
       - name: Existing release
         id: existing
         run: |
