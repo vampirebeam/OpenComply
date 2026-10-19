@@ -531,21 +531,37 @@ fn chain_detail(chain: &[crate::evaluate::RedirectHop]) -> String {
 fn https_redirect(http: &HttpEvidence) -> Outcome {
     match &http.insecure_probe {
         None => Outcome::unknown("the http:// version was not checked".into()),
-        Some(InsecureProbe::Unreachable(why)) => {
-            Outcome::pass(format!("http:// not reachable ({why})"))
-        }
+        Some(InsecureProbe::Refused(why)) => Outcome::pass(format!(
+            "http:// connection was refused from this scan location ({why})"
+        )),
         Some(InsecureProbe::TimedOut(why)) => Outcome::review(
             format!("http:// did not answer ({why})"),
             "http:// timed out, so it is unclear whether port 80 is closed or only slow".into(),
         )
         .with_question("Is port 80 closed on purpose? If it serves the site, redirect it to https:// with 301."),
+        Some(InsecureProbe::Failed(why)) => Outcome::review(
+            format!("http:// connection failed ({why})"),
+            "http:// failed without an answer, so it is unclear whether it serves the site to visitors".into(),
+        )
+        .with_question("Does http:// serve the site to visitors? If it does, redirect it to https:// with 301."),
+        Some(InsecureProbe::NotResolved(why)) => {
+            Outcome::unknown(format!("the http:// host did not resolve ({why})"))
+        }
         Some(InsecureProbe::Responded { chain, final_url }) => {
             let Some(first) = chain.first() else {
                 return Outcome::unknown("the http:// check returned no response".into());
             };
             let detail = chain_detail(chain);
             if first.status >= 400 {
-                return Outcome::pass(detail);
+                // An error answer may reach only this scan (WAF, bot block) or be temporary (5xx).
+                return Outcome::review(
+                    detail,
+                    format!(
+                        "http:// answered {} instead of redirecting; unclear whether every visitor gets this",
+                        first.status
+                    ),
+                )
+                .with_question("Does http:// return this to every visitor? If it serves the site, redirect it to https:// with 301.");
             }
             if !(300..400).contains(&first.status) {
                 return Outcome::fail(
@@ -1936,9 +1952,50 @@ mod tests {
         ));
         assert_eq!(stays.status, Status::Fail);
         let mut closed = ev(&[]);
-        closed.insecure_probe = Some(InsecureProbe::Unreachable("connection refused".into()));
-        assert_eq!(https_redirect(&closed).status, Status::Pass);
+        closed.insecure_probe = Some(InsecureProbe::Refused("connection refused".into()));
+        let refused = https_redirect(&closed);
+        assert_eq!(refused.status, Status::Pass);
+        assert!(refused.detail.contains("from this scan location"));
         assert_eq!(https_redirect(&ev(&[])).status, Status::Unknown);
+    }
+
+    /// Only a 301 / 308 to https:// or a refused connection passes; anything that cannot show http:// is closed for
+    /// every visitor is REVIEW, and a name that does not resolve is not evaluated.
+    #[test]
+    fn https_redirect_does_not_pass_what_it_cannot_confirm() {
+        let mut e = ev(&[]);
+        for (probe, want) in [
+            (
+                InsecureProbe::Failed("connection reset by peer".into()),
+                Status::NeedsReview,
+            ),
+            (
+                InsecureProbe::TimedOut("timed out".into()),
+                Status::NeedsReview,
+            ),
+            (
+                InsecureProbe::NotResolved("dns error".into()),
+                Status::Unknown,
+            ),
+        ] {
+            e.insecure_probe = Some(probe.clone());
+            assert_eq!(https_redirect(&e).status, want, "{probe:?}");
+        }
+        for status in [400, 401, 403, 404, 429, 500, 502, 503, 504] {
+            let o = https_redirect(&probe(
+                &[(status, "http://a.example/")],
+                "http://a.example/",
+            ));
+            assert_eq!(o.status, Status::NeedsReview, "{status}");
+            let reason = o.reason.unwrap_or_default();
+            assert!(reason.contains(&status.to_string()), "{reason}");
+            assert!(reason.chars().count() <= 100, "{reason}");
+            assert!(o.question.is_some_and(|q| q.chars().count() <= 100));
+        }
+        e.insecure_probe = Some(InsecureProbe::Failed("x".into()));
+        let failed = https_redirect(&e);
+        assert!(failed.reason.unwrap_or_default().chars().count() <= 100);
+        assert!(failed.question.is_some_and(|q| q.chars().count() <= 100));
     }
 
     #[test]

@@ -106,6 +106,7 @@ fn cases() -> Vec<Case> {
         page_header_cases(),
         clickjacking_cases(),
         transport_cases(),
+        error_answer_cases(),
         app_cases(),
     ]
     .into_iter()
@@ -448,9 +449,19 @@ fn transport_cases() -> Vec<Case> {
             }),
         ),
         Case {
-            probe: Some(InsecureProbe::Unreachable("connection refused".into())),
+            probe: Some(InsecureProbe::Refused("connection refused".into())),
             ..case("HDR-007", "http:// refused", &[], Is(Status::Pass))
         },
+        probe(
+            "HDR-007",
+            "http:// connection reset (WAF or middlebox)",
+            Some(InsecureProbe::Failed("connection reset by peer".into())),
+        ),
+        probe(
+            "HDR-007",
+            "http:// host does not resolve",
+            Some(InsecureProbe::NotResolved("dns error".into())),
+        ),
         // HDR-008 Header syntax
         not_pass(
             "HDR-008",
@@ -481,6 +492,33 @@ fn transport_cases() -> Vec<Case> {
             ],
         ),
     ]
+}
+
+/// HDR-007 when http:// answers with an error status.
+fn error_answer_cases() -> Vec<Case> {
+    // An error answer on http:// does not show that every visitor gets it (a WAF may block only scanners) or that
+    // http:// normally serves nothing (5xx may be temporary).
+    let mut cases = Vec::new();
+    for (status, name) in [
+        (400, "http:// answers 400"),
+        (401, "http:// answers 401"),
+        (403, "http:// answers 403 (WAF or bot block)"),
+        (404, "http:// answers 404"),
+        (500, "http:// answers 500"),
+        (502, "http:// answers 502"),
+        (503, "http:// answers 503 (temporarily unavailable)"),
+        (504, "http:// answers 504"),
+    ] {
+        cases.push(probe(
+            "HDR-007",
+            name,
+            Some(InsecureProbe::Responded {
+                chain: vec![hop("http://example.com/", status)],
+                final_url: "http://example.com/".into(),
+            }),
+        ));
+    }
+    cases
 }
 
 /// What the application sends: cookies and technology details.

@@ -20,7 +20,7 @@ mod standards;
 pub mod walk;
 
 pub use builtin::HSTS_MIN_MAX_AGE;
-pub use error::Error;
+pub use error::{Error, NetFailure};
 pub use evaluate::{
     evaluate_pack, evaluate_rule, EvalInput, FileProbe, HttpEvidence, InsecureProbe, RedirectHop,
 };

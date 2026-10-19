@@ -6,6 +6,16 @@ use std::time::Duration;
 use crate::finding::Module;
 use crate::report::ExitCode;
 
+/// Kind of network failure, read from the error's type (never from its text). Only `Refused` says a port is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetFailure {
+    Refused,
+    Reset,
+    TimedOut,
+    Unresolved,
+    Other,
+}
+
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Error {
@@ -21,7 +31,10 @@ pub enum Error {
     },
     /// Redirects that come back to a URL already visited (often bot protection answering automated clients).
     RedirectLoop(Vec<String>),
-    Network(String),
+    Network {
+        kind: NetFailure,
+        message: String,
+    },
     Io(std::io::Error),
     NotImplemented(Module),
 }
@@ -33,7 +46,7 @@ impl Error {
             Error::Timeout { .. } | Error::LimitExceeded { .. } | Error::RedirectLoop(_) => {
                 ExitCode::Incomplete
             }
-            Error::Network(_) | Error::Io(_) | Error::NotImplemented(_) => ExitCode::Error,
+            Error::Network { .. } | Error::Io(_) | Error::NotImplemented(_) => ExitCode::Error,
         }
     }
 }
@@ -52,7 +65,7 @@ impl fmt::Display for Error {
                 "redirect loop: {} — the site keeps redirecting automated clients (it may block bots); check it in a browser",
                 urls.join(" → ")
             ),
-            Error::Network(why) => write!(f, "network error: {why}"),
+            Error::Network { message, .. } => write!(f, "network error: {message}"),
             Error::Io(e) => write!(f, "I/O error: {e}"),
             Error::NotImplemented(m) => write!(f, "'{}' scanner is not implemented yet", m.name()),
         }

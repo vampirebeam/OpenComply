@@ -164,7 +164,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, ext: "" }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, ext: "" }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, ext: ".exe" }
           - { os: macos-latest, target: aarch64-apple-darwin, ext: "" }
     steps:
@@ -195,6 +195,22 @@ jobs:
           path: _sbom
       - name: Build
         run: cargo build --release --locked -p opencomply-cli
+      # The Linux binary must run on glibc 2.34 (RHEL / AlmaLinux / Rocky 9, Amazon Linux 2023, Ubuntu 22.04+,
+      # Debian 12+): fail if it needs a newer symbol, then run it on that glibc (official image pinned by digest,
+      # no network, non-root, read-only).
+      - name: glibc baseline
+        if: runner.os == 'Linux'
+        env:
+          BASELINE: "2.34"
+          IMAGE: almalinux:9.8-minimal-20261002@sha256:8e56ca192f602eb1c486b870f268730f4b08179b43845184a3623c6634f5d01a
+        run: |
+          need=$(objdump -T target/release/opencomply | grep -o 'GLIBC_[0-9][0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "binary needs glibc ${need}, baseline ${BASELINE}"
+          [ -n "$need" ] || { echo "::error::no GLIBC symbol versions found"; exit 1; }
+          [ "$(printf '%s\n%s\n' "$need" "$BASELINE" | sort -V | tail -1)" = "$BASELINE" ] || { echo "::error::binary needs glibc ${need} > ${BASELINE}"; exit 1; }
+          docker run --rm --network none --read-only --user 65534:65534 --cap-drop ALL \
+            -v "$PWD/target/release:/b:ro" "$IMAGE" \
+            sh -c 'ldd --version | head -1 && /b/opencomply --version && /b/opencomply standards --format json && /b/opencomply schema report > /dev/null'
       - name: Package
         shell: bash
         env:

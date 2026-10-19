@@ -9,7 +9,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use opencomply_core::limits::{check_headers, Deadline, RedirectBudget};
-use opencomply_core::{Error, Limits, RedirectHop, SCANNER_VERSION};
+use opencomply_core::{Error, Limits, NetFailure, RedirectHop, SCANNER_VERSION};
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::{redirect, Url};
 
@@ -134,6 +134,18 @@ impl std::fmt::Display for Blocked {
 
 impl std::error::Error for Blocked {}
 
+/// The system resolver found no address for the host (kept as a type so the failure is not told from its text).
+#[derive(Debug)]
+struct Unresolved(String);
+
+impl std::fmt::Display for Unresolved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for Unresolved {}
+
 /// Resolver that drops disallowed addresses; reqwest then connects only to what it returns.
 struct GuardedResolver {
     policy: NetPolicy,
@@ -144,8 +156,12 @@ impl Resolve for GuardedResolver {
         let policy = self.policy;
         let host = name.as_str().to_string();
         Box::pin(async move {
-            let found: Vec<SocketAddr> =
-                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            let found: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await
+                .map_err(|e| {
+                    Box::new(Unresolved(e.to_string())) as Box<dyn std::error::Error + Send + Sync>
+                })?
+                .collect();
             let ok: Vec<SocketAddr> = found
                 .into_iter()
                 .filter(|a| allowed(a.ip(), policy))
@@ -192,18 +208,40 @@ pub fn user_agent() -> String {
     format!("OpenComply/{SCANNER_VERSION} (+https://github.com/vampirebeam/OpenComply)")
 }
 
+/// The message keeps the whole source chain; the kind comes only from types in it (`io::ErrorKind`, `Unresolved`).
 fn net_err(e: &reqwest::Error) -> Error {
     let mut msg = e.to_string();
+    let mut kind = if e.is_timeout() {
+        NetFailure::TimedOut
+    } else {
+        NetFailure::Other
+    };
     let mut source = std::error::Error::source(e);
     while let Some(s) = source {
         // A host resolving only to blocked addresses is a refused target (exit 2), not a network failure.
         if let Some(blocked) = s.downcast_ref::<Blocked>() {
             return Error::InvalidTarget(blocked.to_string());
         }
+        if s.is::<Unresolved>() {
+            kind = NetFailure::Unresolved;
+        } else if let Some(io) = s.downcast_ref::<std::io::Error>() {
+            kind = match io.kind() {
+                std::io::ErrorKind::ConnectionRefused => NetFailure::Refused,
+                std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::UnexpectedEof => NetFailure::Reset,
+                std::io::ErrorKind::TimedOut => NetFailure::TimedOut,
+                _ => kind,
+            };
+        }
         msg = format!("{msg}: {s}");
         source = s.source();
     }
-    Error::Network(msg.chars().take(300).collect())
+    Error::Network {
+        kind,
+        message: msg.chars().take(300).collect(),
+    }
 }
 
 impl SafeClient {

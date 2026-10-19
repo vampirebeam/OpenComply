@@ -248,7 +248,7 @@ async fn slow_server_times_out_instead_of_hanging() {
         started.elapsed()
     );
     assert!(
-        matches!(err, Error::Timeout { .. } | Error::Network(_)),
+        matches!(err, Error::Timeout { .. } | Error::Network { .. }),
         "{err}"
     );
 }

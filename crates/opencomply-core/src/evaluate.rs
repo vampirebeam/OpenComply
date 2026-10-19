@@ -37,10 +37,16 @@ pub struct RedirectHop {
 /// Result of requesting the `http://` version of the target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InsecureProbe {
-    /// `http://` refused the connection: nothing is served there.
-    Unreachable(String),
+    /// `http://` refused the connection (told by the error's kind, never its text): nothing is served there from
+    /// this scan location.
+    Refused(String),
     /// `http://` gave no answer in time: a firewall dropping port 80, or a slow server — one probe cannot tell.
     TimedOut(String),
+    /// `http://` failed without an HTTP answer in any other way (reset, protocol error, unclear): it may still serve
+    /// the site to visitors.
+    Failed(String),
+    /// The host name of `http://` did not resolve: nothing was checked.
+    NotResolved(String),
     /// Every response in order; `final_url` is where the chain ended.
     Responded {
         chain: Vec<RedirectHop>,

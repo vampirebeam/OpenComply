@@ -51,6 +51,8 @@ irm https://github.com/vampirebeam/OpenComply/releases/latest/download/install.p
 
 Then open a new terminal and run `opencomply`. The installer downloads the release for your operating system, checks its SHA-256 before installing, and needs no admin rights (Windows: `%LOCALAPPDATA%\opencomply\bin` on the user PATH · Linux / macOS: `~/.local/bin/opencomply`).
 
+Linux compatibility: The Linux x86_64 binary requires glibc 2.34 or later. Check your system with `ldd --version` before installing.
+
 ### Read the installer before it runs
 
 ```bash

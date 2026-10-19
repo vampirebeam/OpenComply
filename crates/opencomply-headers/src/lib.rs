@@ -9,7 +9,7 @@ use opencomply_core::rules::{RulePack, OFFICIAL_HEADERS_PACK, OFFICIAL_HEADERS_S
 use opencomply_core::signing::TrustedKey;
 use opencomply_core::{
     detect_from_html, detect_platforms, merge_platforms, meta_generator, without_host_infra, Error,
-    EvalInput, HttpEvidence, InsecureProbe, Limits, Module, Report, RuleRegistry,
+    EvalInput, HttpEvidence, InsecureProbe, Limits, Module, NetFailure, Report, RuleRegistry,
 };
 use opencomply_http::{validate_target, FetchOptions, FetchResult, NetPolicy, SafeClient};
 use url::Url;
@@ -52,24 +52,22 @@ fn insecure_url(url: &Url) -> Option<String> {
     Some(u.to_string())
 }
 
-/// What a failed `http://` request says about the port: a timeout (including a connect timeout) is told apart from a
-/// refused connection; other errors say nothing.
+/// What a failed `http://` request says about the port, from the error's kind (never its text): only a refused
+/// connection means nothing is served there; reset, protocol and unclear failures stay open; an address the policy
+/// blocks says nothing.
 fn closed(e: &Error) -> Option<InsecureProbe> {
     let why = e.to_string();
-    match e {
-        Error::Timeout { .. } => Some(InsecureProbe::TimedOut(why)),
-        Error::Network(m) => {
-            let m = m.to_ascii_lowercase();
-            if m.contains("timed out") || m.contains("timeout") {
-                Some(InsecureProbe::TimedOut(why))
-            } else if m.contains("connect") || m.contains("refused") {
-                Some(InsecureProbe::Unreachable(why))
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
+    Some(match e {
+        Error::Timeout { .. } => InsecureProbe::TimedOut(why),
+        Error::Network { kind, .. } => match kind {
+            NetFailure::Refused => InsecureProbe::Refused(why),
+            NetFailure::TimedOut => InsecureProbe::TimedOut(why),
+            NetFailure::Unresolved => InsecureProbe::NotResolved(why),
+            NetFailure::Reset | NetFailure::Other => InsecureProbe::Failed(why),
+        },
+        Error::LimitExceeded { .. } | Error::Io(_) => InsecureProbe::Failed(why),
+        _ => return None,
+    })
 }
 
 fn responded(r: FetchResult) -> InsecureProbe {
@@ -248,13 +246,13 @@ mod tests {
     }
 
     /// What `http://` itself did decides the probe: refused or timed out only when the first hop did; a redirect
-    /// whose next hop fails is still that redirect (302 → REVIEW, 301 to http:// → FAIL, never "not reachable").
+    /// whose next hop fails is still that redirect (302 → REVIEW, 301 to http:// → FAIL, never "refused").
     #[tokio::test]
     async fn probe_reports_what_the_first_hop_did() {
         let refused = format!("http://127.0.0.1:{}/", closed_port().await);
         assert!(matches!(
             probe(&refused).await,
-            Some(InsecureProbe::Unreachable(_))
+            Some(InsecureProbe::Refused(_))
         ));
         assert!(matches!(
             probe(&serve(None).await).await,
@@ -291,13 +289,38 @@ mod tests {
         assert_eq!(first_status(p.as_ref()), Some(301), "{p:?}");
     }
 
+    fn net(kind: NetFailure, message: &str) -> Error {
+        Error::Network {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    /// Only the kind decides: a refused-looking message of another kind is not "refused", and nothing passes on text.
     #[test]
-    fn refused_is_closed_and_timeout_is_told_apart() {
+    fn error_kind_not_text_decides_the_probe() {
         assert!(matches!(
-            closed(&Error::Network(
-                "error sending request: client error (Connect): Connection refused".into()
+            closed(&net(NetFailure::Refused, "anything")),
+            Some(InsecureProbe::Refused(_))
+        ));
+        assert!(matches!(
+            closed(&net(
+                NetFailure::Other,
+                "client error (Connect): Connection refused"
             )),
-            Some(InsecureProbe::Unreachable(_))
+            Some(InsecureProbe::Failed(_))
+        ));
+        assert!(matches!(
+            closed(&net(NetFailure::Reset, "connection reset by peer")),
+            Some(InsecureProbe::Failed(_))
+        ));
+        assert!(matches!(
+            closed(&net(NetFailure::Other, "invalid HTTP version parsed")),
+            Some(InsecureProbe::Failed(_))
+        ));
+        assert!(matches!(
+            closed(&net(NetFailure::TimedOut, "operation timed out")),
+            Some(InsecureProbe::TimedOut(_))
         ));
         assert!(matches!(
             closed(&Error::Timeout {
@@ -307,11 +330,108 @@ mod tests {
             Some(InsecureProbe::TimedOut(_))
         ));
         assert!(matches!(
-            closed(&Error::Network(
-                "error sending request: client error (Connect): operation timed out".into()
-            )),
-            Some(InsecureProbe::TimedOut(_))
+            closed(&net(NetFailure::Unresolved, "dns error")),
+            Some(InsecureProbe::NotResolved(_))
         ));
-        assert!(closed(&Error::Network("invalid HTTP version parsed".into())).is_none());
+        assert!(closed(&Error::InvalidTarget("blocked".into())).is_none());
+    }
+
+    /// Accepts each connection, reads the request and closes it with a TCP reset (what some WAFs do to scanners).
+    async fn serve_reset() -> String {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock.set_zero_linger();
+                drop(sock);
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// One canned response per connection, in order (the last repeats).
+    async fn serve_seq(responses: &'static [&'static str]) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut n = 0;
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let r = responses[n.min(responses.len() - 1)];
+                n += 1;
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock.write_all(r.as_bytes()).await;
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    /// HDR-007 from the official pack for a probe result.
+    fn hdr007(probe: Option<InsecureProbe>) -> opencomply_core::Status {
+        let mut warnings = Vec::new();
+        let evidence = HttpEvidence {
+            source: "GET https://example.com/".into(),
+            status: 200,
+            https: true,
+            headers: Vec::new(),
+            insecure_probe: probe,
+            redirect_cookies: Vec::new(),
+            html_generator: None,
+        };
+        let report = official_registry(&mut warnings).unwrap().evaluate(
+            Module::Headers,
+            "https://example.com/",
+            &EvalInput::Http(&evidence),
+            Vec::new(),
+        );
+        report
+            .findings
+            .iter()
+            .find(|f| f.rule_id == "HDR-007")
+            .map(|f| f.status)
+            .unwrap()
+    }
+
+    /// Real sockets end to end: only a refused port passes; a reset, an error answer (WAF 403 with its headers, a 503)
+    /// is REVIEW; a name that does not resolve is UNKNOWN; and a later scan of the same server that now redirects
+    /// with 301 passes (nothing carries over).
+    #[tokio::test]
+    async fn probe_outcomes_on_real_sockets() {
+        use opencomply_core::Status;
+        let refused = format!("http://127.0.0.1:{}/", closed_port().await);
+        assert_eq!(hdr007(probe(&refused).await), Status::Pass);
+
+        let reset = probe(&serve_reset().await).await;
+        assert!(matches!(reset, Some(InsecureProbe::Failed(_))), "{reset:?}");
+        assert_eq!(hdr007(reset), Status::NeedsReview);
+
+        let waf = probe(
+            &serve(Some(
+                "HTTP/1.1 403 Forbidden\r\nServer: cloudflare\r\nCF-RAY: 0-TEST\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ))
+            .await,
+        )
+        .await;
+        assert_eq!(first_status(waf.as_ref()), Some(403));
+        assert_eq!(hdr007(waf), Status::NeedsReview);
+
+        let unresolved = probe("http://opencomply-test.invalid/").await;
+        assert!(
+            matches!(unresolved, Some(InsecureProbe::NotResolved(_))),
+            "{unresolved:?}"
+        );
+        assert_eq!(hdr007(unresolved), Status::Unknown);
+
+        let flaky = serve_seq(&[
+            "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 301 Moved Permanently\r\nLocation: https://opencomply-test.invalid/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        ])
+        .await;
+        assert_eq!(hdr007(probe(&flaky).await), Status::NeedsReview);
+        assert_eq!(hdr007(probe(&flaky).await), Status::Pass);
     }
 }
