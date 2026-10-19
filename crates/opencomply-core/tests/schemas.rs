@@ -1,5 +1,5 @@
 //! Drift guard: committed schemas in `schemas/` must equal the schemas generated from the code.
-//! Regenerate with `opencomply schema rule-pack > schemas/rule-pack.schema.json` (same for `report`).
+//! Regenerate with `opencomply schema rule-pack > schemas/rule-pack.schema.json` (same for `report`, `standards`).
 
 use opencomply_core::schema::{report_schema, rule_pack_schema};
 
@@ -55,4 +55,14 @@ fn schemas_describe_key_constraints() {
     ] {
         assert!(report.contains(&format!("\"{field}\"")), "{field}");
     }
+}
+
+#[test]
+fn standards_schema_is_up_to_date() {
+    let committed = opencomply_core::root_file!("schemas/standards.schema.json");
+    assert_eq!(
+        normalize(committed),
+        opencomply_core::schema::standards_schema(),
+        "schemas/standards.schema.json is stale — regenerate it"
+    );
 }

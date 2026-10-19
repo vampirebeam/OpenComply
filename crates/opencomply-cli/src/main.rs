@@ -13,8 +13,9 @@ use opencomply_core::rules::{LoadError, RulePack, MAX_PACK_BYTES};
 use opencomply_core::schema;
 use opencomply_core::signing::{TrustedKey, MAX_SIGNATURE_FILE_BYTES};
 use opencomply_core::{
-    render_with, Assessment, Error, ExitCode, FailOn, Format, Limits, Module, RenderOptions,
-    Report, RuleRegistry, Target, REPORT_SCHEMA_VERSION, SCANNER_VERSION, STANDARDS,
+    released_standards, render_with, standards_doc, Assessment, Error, ExitCode, FailOn, Format,
+    Limits, Module, RenderOptions, Report, RuleRegistry, Target, REPORT_SCHEMA_VERSION,
+    SCANNER_VERSION,
 };
 use opencomply_http::NetPolicy;
 
@@ -53,8 +54,12 @@ enum Command {
         allow_private: bool,
     },
     /// List supported standards, scanner version and report schema version
-    Standards,
-    /// Print a JSON Schema (rule pack files or the JSON report)
+    Standards {
+        /// Output format (json: for agents and other programs)
+        #[arg(long, value_enum, default_value_t = StandardsFormat::Text)]
+        format: StandardsFormat,
+    },
+    /// Print a JSON Schema (rule pack files, the JSON report or the standards list)
     Schema {
         #[arg(value_enum)]
         kind: SchemaKind,
@@ -76,6 +81,13 @@ enum Command {
 enum SchemaKind {
     RulePack,
     Report,
+    Standards,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum StandardsFormat {
+    Text,
+    Json,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -108,9 +120,6 @@ enum ScanModule {
     /// HTTP security headers of a URL (https:// is assumed when no scheme is given)
     Headers { url: String },
 }
-
-/// Modules with a working scanner, shown by `standards`.
-const RELEASED: [Module; 1] = [Module::Headers];
 
 #[derive(Clone, Copy, ValueEnum)]
 enum OutputFormat {
@@ -180,7 +189,7 @@ fn run_scan(
 
 fn print_standards() {
     println!("opencomply {SCANNER_VERSION} report_schema={REPORT_SCHEMA_VERSION}");
-    for s in STANDARDS.iter().filter(|s| RELEASED.contains(&s.module)) {
+    for s in released_standards() {
         let result = match s.assessment {
             Assessment::Grade => "grade",
             Assessment::Readiness => "readiness 0-4",
@@ -308,14 +317,21 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
-        Command::Standards => {
-            print_standards();
+        Command::Standards { format } => {
+            match format {
+                StandardsFormat::Text => print_standards(),
+                StandardsFormat::Json => println!(
+                    "{}",
+                    serde_json::to_string(&standards_doc()).unwrap_or_else(|_| "{}".to_string())
+                ),
+            }
             ExitCode::Ok
         }
         Command::Schema { kind } => {
             let text = match kind {
                 SchemaKind::RulePack => schema::rule_pack_schema(),
                 SchemaKind::Report => schema::report_schema(),
+                SchemaKind::Standards => schema::standards_schema(),
             };
             print!("{text}");
             ExitCode::Ok

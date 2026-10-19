@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenComplyStandards",
+  "description": "`opencomply standards --format json`: what this version can check. A module that is not listed is not checked by\nthis version — it says nothing about whether a site or system meets that standard.",
+  "type": "object",
+  "properties": {
+    "modules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StandardEntry"
+      }
+    },
+    "report_schema": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "scanner_version": {
+      "type": "string"
+    },
+    "standards_schema": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "standards_schema",
+    "scanner_version",
+    "report_schema",
+    "modules"
+  ],
+  "$defs": {
+    "Assessment": {
+      "type": "string",
+      "enum": [
+        "grade"
+      ]
+    },
+    "Module": {
+      "type": "string",
+      "enum": [
+        "headers"
+      ]
+    },
+    "StandardEntry": {
+      "type": "object",
+      "properties": {
+        "edition": {
+          "type": "string"
+        },
+        "module": {
+          "$ref": "#/$defs/Module"
+        },
+        "name": {
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/Assessment"
+        },
+        "rule_prefix": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "name",
+        "edition",
+        "rule_prefix",
+        "result"
+      ]
+    }
+  }
+}

@@ -294,10 +294,7 @@
     "Module": {
       "type": "string",
       "enum": [
-        "headers",
-        "tls",
-        "iso27001",
-        "iso42001"
+        "headers"
       ]
     },
     "PlatformFix": {

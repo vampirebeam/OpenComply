@@ -83,5 +83,8 @@ status plus `advice`), `findings[]` (`rule_id`, `rule_version`, `title`, `status
 Evidence `detail` is redacted, then cut to 4,096 characters in JSON and 300 in the summary / Markdown;
 `truncated: true` = the shown value is not whole (the check itself used the whole value).
 Full schema: `opencomply schema report`.
+This describes `schema_version` 1. New fields are always optional, so the same version keeps the same meanings; a
+higher `schema_version` means compatibility is not confirmed: show only the target, scanner version and number of
+findings, do not state a grade, verdict, PASS or FAIL, and tell the user to update the OpenComply plugin.
 Evidence `class`: `verified` = read from the response and used to decide (including the page's own
 `<meta name="generator">`); `inferred` = platform detection, guidance only.

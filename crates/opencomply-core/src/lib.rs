@@ -39,7 +39,10 @@ pub use render::{
 };
 pub use report::{ExitCode, FailOn, Report, RulePackRef, Summary, Verdict, REPORT_SCHEMA_VERSION};
 pub use scanner::{Limits, Scanner, Target};
-pub use standards::{Assessment, Grade, ReadinessLevel, Standard, STANDARDS};
+pub use standards::{
+    released_standards, standards_doc, Assessment, Grade, ReadinessLevel, Standard, StandardsDoc,
+    RELEASED, STANDARDS,
+};
 
 pub const SCANNER_VERSION: &str = env!("CARGO_PKG_VERSION");
 

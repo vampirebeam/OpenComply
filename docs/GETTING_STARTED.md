@@ -103,6 +103,7 @@ The binaries are not signed by Apple or Microsoft, so the operating system may s
 opencomply scan headers https://example.com      # HTTP security headers
 opencomply scan headers example.com              # no scheme = https://
 opencomply standards                             # what OpenComply checks, scanner and report schema versions
+opencomply standards --format json               # the same as JSON, for agents and other programs
 opencomply schema report                         # JSON Schema of the report
 ```
 

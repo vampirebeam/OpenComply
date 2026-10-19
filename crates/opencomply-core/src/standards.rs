@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::finding::Module;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Assessment {
     Grade,
@@ -56,6 +56,54 @@ pub const STANDARDS: [Standard; 4] = [
         annex_a_controls: Some(38),
     },
 ];
+
+/// Modules with a working scanner: the only ones the CLI lists, accepts or names in public output (`standards`, JSON
+/// schemas). Others exist here as internal scaffolding only.
+pub const RELEASED: [Module; 1] = [Module::Headers];
+
+/// The standards of released modules — one source for `standards` text and JSON.
+pub fn released_standards() -> impl Iterator<Item = &'static Standard> {
+    STANDARDS.iter().filter(|s| RELEASED.contains(&s.module))
+}
+
+pub const STANDARDS_SCHEMA_VERSION: u32 = 1;
+
+/// `opencomply standards --format json`: what this version can check. A module that is not listed is not checked by
+/// this version — it says nothing about whether a site or system meets that standard.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[schemars(rename = "OpenComplyStandards")]
+pub struct StandardsDoc {
+    pub standards_schema: u32,
+    pub scanner_version: &'static str,
+    pub report_schema: u32,
+    pub modules: Vec<StandardEntry>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct StandardEntry {
+    pub module: Module,
+    pub name: &'static str,
+    pub edition: &'static str,
+    pub rule_prefix: &'static str,
+    pub result: Assessment,
+}
+
+pub fn standards_doc() -> StandardsDoc {
+    StandardsDoc {
+        standards_schema: STANDARDS_SCHEMA_VERSION,
+        scanner_version: crate::SCANNER_VERSION,
+        report_schema: crate::REPORT_SCHEMA_VERSION,
+        modules: released_standards()
+            .map(|s| StandardEntry {
+                module: s.module,
+                name: s.name,
+                edition: s.edition,
+                rule_prefix: s.rule_prefix,
+                result: s.assessment,
+            })
+            .collect(),
+    }
+}
 
 impl Module {
     pub const ALL: [Module; 4] = [

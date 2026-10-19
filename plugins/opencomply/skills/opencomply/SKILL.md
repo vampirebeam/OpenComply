@@ -15,16 +15,21 @@ Answer in the language the user wrote in, even though this skill and the CLI out
 
 ## Scope — what this version checks
 
+Once you have the CLI (step 1), run `opencomply standards --format json` before checking anything. Its `modules` list
+is the only source of what this version checks (if the CLI rejects `--format json`, it is older: use
+`opencomply standards`). A check that is not listed is not done by this version — that says nothing about whether the
+site or system meets it.
+
 | Request | Do |
 |---|---|
-| A website, its security headers, or "is my site secure?" | Headers check — read [reference/HEADERS.md](reference/HEADERS.md); say it covers HTTP security headers only |
-| Anything else (SSL/TLS, certificates, ports, malware, vulnerabilities, a repository's standards) | Run `opencomply standards` — it lists what this version checks. If it is not listed, say plainly OpenComply does not check it, offer what it does check, and keep any general advice of your own clearly separate from OpenComply results. Do not probe it yourself (curl, openssl, sockets) unless the user asks for that afterwards |
+| A website, its security headers, or "is my site secure?" (module `headers`) | Headers check — read [reference/HEADERS.md](reference/HEADERS.md); say it covers HTTP security headers only |
+| Anything not in `modules` (SSL/TLS, certificates, ports, malware, vulnerabilities, a repository's standards) | Say plainly this version of OpenComply does not check it and offer what it does check. Do not run a listed check in its place without saying so. Keep any general advice of your own clearly separate from OpenComply results. Do not probe it yourself (curl, openssl, sockets) unless the user asks for that afterwards |
 
 Never guess or present results the CLI did not produce. A bare domain (`www.example.com`) is fine — the CLI assumes `https://`.
 
 ## 1. Find or install the CLI
 
-1. Run `opencomply --version`. If it prints `opencomply 0.3.12` or later, use `opencomply`.
+1. Run `opencomply --version`. If it prints `opencomply 0.3.13` or later, use `opencomply`.
 2. If the command is not found, it may be installed but not yet on this session's PATH (the app was open during the
    install). Try the standard location before anything else and use it if it prints a version:
    - Windows: `%LOCALAPPDATA%\opencomply\bin\opencomply.exe`
