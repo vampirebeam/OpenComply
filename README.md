@@ -5,7 +5,7 @@
 <h3 align="center">เครื่องมือตรวจสอบความปลอดภัยของเว็บไซต์<br/>ระบุสิ่งที่ขาด วิธีแก้ไข และตำแหน่งที่ต้องแก้ไข ในรูปแบบที่ทั้งนักพัฒนาและ AI agent นำไปใช้ต่อได้</h3>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.3.14-f59e0b?style=flat-square" alt="Version 0.3.14" />
+  <img src="https://img.shields.io/badge/version-0.3.15-f59e0b?style=flat-square" alt="Version 0.3.15" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-22c55e?style=flat-square" alt="Apache-2.0 License" /></a>
   <img src="https://img.shields.io/badge/rust-1.90-0891b2?style=flat-square&logo=rust&logoColor=white" alt="Rust 1.90" />
   <img src="https://img.shields.io/badge/agent_skill-Agent_Skills_format-7C3AED?style=flat-square" alt="Agent skill in the Agent Skills format" />

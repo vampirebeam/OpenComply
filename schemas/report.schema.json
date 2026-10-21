@@ -228,19 +228,15 @@
       ]
     },
     "Grade": {
-      "description": "Letter grades. Headers uses A+–F; TLS additionally uses A-, E, T (untrusted), M (hostname mismatch).\n`NotAssessed` = a required probe did not complete; it is never upgraded to a letter grade.",
+      "description": "Letter grade, best first. `N/A` = a required probe did not complete; it is never upgraded to a letter grade.",
       "type": "string",
       "enum": [
         "A+",
         "A",
-        "A-",
         "B",
         "C",
         "D",
-        "E",
         "F",
-        "T",
-        "M",
         "N/A"
       ]
     },

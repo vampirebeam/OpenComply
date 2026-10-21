@@ -123,8 +123,7 @@ impl Module {
     }
 }
 
-/// Letter grades. Headers uses A+–F; TLS additionally uses A-, E, T (untrusted), M (hostname mismatch).
-/// `NotAssessed` = a required probe did not complete; it is never upgraded to a letter grade.
+/// Letter grade, best first. `N/A` = a required probe did not complete; it is never upgraded to a letter grade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, schemars::JsonSchema)]
 pub enum Grade {
     #[serde(rename = "A+")]
@@ -144,6 +143,20 @@ pub enum Grade {
 }
 
 impl Grade {
+    pub const ALL: [Grade; 11] = [
+        Grade::APlus,
+        Grade::A,
+        Grade::AMinus,
+        Grade::B,
+        Grade::C,
+        Grade::D,
+        Grade::E,
+        Grade::F,
+        Grade::T,
+        Grade::M,
+        Grade::NotAssessed,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Grade::APlus => "A+",

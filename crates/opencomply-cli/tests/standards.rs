@@ -83,9 +83,29 @@ fn public_output_names_no_unreleased_module() {
     assert!(!words.is_empty());
     for text in outputs.iter().map(String::as_str).chain(schemas) {
         for w in &words {
-            assert!(!text.contains(&format!("\"{w}\"")), "{w}");
-            assert!(!text.contains(&format!(" {w} ")), "{w}");
+            assert!(!has_word(text, w), "{w}");
         }
         assert!(!text.contains("readiness"), "readiness");
     }
+}
+
+/// Whole-word match ignoring case ("TLS additionally" and `"tls"` both count; "https" does not contain "tls").
+fn has_word(text: &str, word: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    let word = word.to_ascii_lowercase();
+    let edge = |c: Option<char>| c.is_none_or(|c| !c.is_ascii_alphanumeric());
+    // A prefix such as "tls-" is followed by its number, so only a word ending in a letter or digit needs a right edge.
+    let open_end = word.ends_with(|c: char| !c.is_ascii_alphanumeric());
+    text.match_indices(&word).any(|(i, _)| {
+        edge(text[..i].chars().next_back())
+            && (open_end || edge(text[i + word.len()..].chars().next()))
+    })
+}
+
+#[test]
+fn whole_word_check_catches_any_case() {
+    assert!(has_word("Headers uses A+–F; TLS additionally", "tls"));
+    assert!(has_word(r#"["headers","tls"]"#, "tls"));
+    assert!(has_word("see TLS-001", "TLS-"));
+    assert!(!has_word("https://example.com", "tls"));
 }

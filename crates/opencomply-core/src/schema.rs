@@ -1,12 +1,13 @@
 //! JSON Schemas generated from the exact types the scanner parses (rule packs) and emits (`--format json`), so the
 //! published schemas cannot drift from the code. Committed copies live in `schemas/`; a test fails if they differ.
-//! Published schemas name only released modules (`RELEASED`): unreleased ones are internal scaffolding.
+//! Published schemas name only released modules (`RELEASED`) and the assessments and grades they use
+//! (`Grade::allowed_for`): unreleased ones are internal scaffolding.
 
 use schemars::{schema_for, Schema};
 
 use crate::render::JsonReport;
 use crate::rules::RulePack;
-use crate::standards::{released_standards, StandardsDoc, RELEASED};
+use crate::standards::{released_standards, Grade, StandardsDoc, RELEASED};
 
 fn pretty(schema: &Schema) -> String {
     let mut value = schema.as_value().clone();
@@ -23,6 +24,16 @@ fn pretty(schema: &Schema) -> String {
         kinds.retain(|k| {
             released_standards()
                 .any(|s| serde_json::to_value(s.assessment).ok().as_ref() == Some(k))
+        });
+    }
+    if let Some(grades) = value
+        .pointer_mut("/$defs/Grade/enum")
+        .and_then(|v| v.as_array_mut())
+    {
+        grades.retain(|g| {
+            Grade::ALL.iter().any(|grade| {
+                g.as_str() == Some(grade.label()) && RELEASED.iter().any(|m| grade.allowed_for(*m))
+            })
         });
     }
     // Back into a `Schema` so its serializer keeps the usual keyword order (`$schema`, `title`, … first).

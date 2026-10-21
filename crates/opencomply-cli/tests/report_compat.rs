@@ -126,6 +126,30 @@ fn this_build_still_reads_and_keeps_the_schema_version() {
     assert_eq!(doc["report_schema"], SUPPORTED_SCHEMA);
 }
 
+/// The published schema lists only the grades released modules can give. Every report of an earlier release still
+/// fits it (no released version could emit another grade), and the list is exactly the released modules' grades.
+#[test]
+fn published_grades_cover_every_earlier_report() {
+    let schema: serde_json::Value =
+        serde_json::from_str(opencomply_core::root_file!("schemas/report.schema.json")).unwrap();
+    let published: Vec<&str> = schema["$defs"]["Grade"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g.as_str().unwrap())
+        .collect();
+    for (name, json) in EARLIER {
+        let grade = read(json).grade.unwrap().grade;
+        assert!(published.contains(&grade.as_str()), "{name}: {grade}");
+    }
+    let released: Vec<&str> = opencomply_core::Grade::ALL
+        .iter()
+        .filter(|g| opencomply_core::RELEASED.iter().any(|m| g.allowed_for(*m)))
+        .map(|g| g.label())
+        .collect();
+    assert_eq!(published, released);
+}
+
 #[test]
 fn a_new_optional_field_does_not_break_a_consumer() {
     let mut v: serde_json::Value = serde_json::from_str(EARLIER[4].1).unwrap();

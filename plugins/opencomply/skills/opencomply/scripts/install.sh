@@ -7,7 +7,7 @@
 # Supported: Linux x86_64, macOS Apple Silicon. Override the version with OPENCOMPLY_VERSION=X.Y.Z.
 set -eu
 
-VERSION="${OPENCOMPLY_VERSION:-0.3.14}"
+VERSION="${OPENCOMPLY_VERSION:-0.3.15}"
 REPO="vampirebeam/OpenComply"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}/opencomply"
 LINK="$HOME/.local/bin/opencomply"
